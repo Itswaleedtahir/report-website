@@ -1,16 +1,16 @@
 {
   "development": {
     "username": "root",
-    "password": "root",
+    "password": "gpdata01",
     "database": "gpdata",
-    "host": "localhost",
+    "host": "104.154.101.240",
     "dialect": "mysql"
   },
   "production": {
     "username": "root",
-    "password": "root",
+    "password": "gpdata01",
     "database": "gpdata",
-    "host": "localhost",
+    "host": "104.154.101.240",
     "dialect": "mysql"
   }
 }

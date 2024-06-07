@@ -17,9 +17,6 @@ module.exports = (sequelize, DataTypes) => {
           key: 'id'
         }
       },
-      protocolId: {
-        type: DataTypes.STRING,
-      },
       key:{
         type: DataTypes.STRING,
         allowNull: false,

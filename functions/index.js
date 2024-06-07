@@ -1,6 +1,6 @@
 const { exec } = require('child_process');
 const {onRequest} = require("firebase-functions/v2/https");
-const { Datas, pdf_email,labreport_data ,lab_report,labreport_email} = require("../functions/models/index");
+const {pdf_email,labreport_data ,lab_report,labreport_email} = require("./models/index");
 const { Storage } = require('@google-cloud/storage');
 const { Parser } = require('json2csv');
 const path = require('path');
@@ -25,7 +25,8 @@ const storage = new Storage({projectId: 'gp-data-1-0', credentials: googleCreden
 
 exports.SendGridEmailListener= onRequest((req,res)=>{
       const body = req.body
-      
+      console.log("body",body)
+      return res.status(200).send("helloooooo")
 })
 
 exports.runMigrations =onRequest((req, res) => {
@@ -47,6 +48,7 @@ exports.pdfEmail = onRequest(async (req,res)=>{
   })
   res.status(200).send("created")
 })
+
 exports.LabReport= onRequest(async (req, res) => {
   try {
     const {protocolId,investigator,subjectId,dateOfCollection,timePoint,pdfEmailId }=req.body
@@ -64,7 +66,7 @@ exports.LabReport= onRequest(async (req, res) => {
 
 exports.LabReportData= onRequest(async (req, res) => {
   try {
-    const labReoprtFk = 1; // This can be dynamic if needed
+    const labReoprtFk = 2; // This can be dynamic if needed
     const labDataArray = req.body; // Assuming req.body is an array of objects
 
     // Validate that req.body is an array
