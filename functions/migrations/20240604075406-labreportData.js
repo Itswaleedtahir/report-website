@@ -17,16 +17,20 @@ module.exports = {
           key: 'id'
         }
       },
+      refRangeFk: {
+        type: Sequelize.INTEGER,
+        allowNull: false,
+        references: {         // User belongsTo Company 1:1
+          model: 'ref_range_data',
+          key: 'id'
+        }
+      },
       key:{
         type: Sequelize.STRING,
         allowNull: false,
       },
       value:{
         type: Sequelize.STRING,
-        allowNull: false,
-      },
-      refValue: {
-        type: Sequelize.STRING, // Change from DATE to STRING
         allowNull: false,
       },
       isPending:{

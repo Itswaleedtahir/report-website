@@ -17,16 +17,20 @@ module.exports = (sequelize, DataTypes) => {
           key: 'id'
         }
       },
+      refRangeFk: {
+        type: DataTypes.INTEGER,
+        allowNull: false,
+        references: {         // User belongsTo Company 1:1
+          model: 'ref_range_data',
+          key: 'id'
+        }
+      },
       key:{
         type: DataTypes.STRING,
         allowNull: false,
       },
       value:{
         type: DataTypes.STRING,
-        allowNull: false,
-      },
-      refValue: {
-        type:DataTypes.STRING,
         allowNull: false,
       },
       isPending:{
@@ -44,6 +48,9 @@ module.exports = (sequelize, DataTypes) => {
     LapReportData.hasMany(models.lab_report, { 
       foreignKey: { name: 'labReoprtFk' },
       as: 'labReoprt'})
+      LapReportData.hasMany(models.lab_report, { 
+        foreignKey: { name: 'refRangeFk' },
+        as: 'refRange'})
   };
   return LapReportData;
 };
