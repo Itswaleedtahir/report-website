@@ -1,6 +1,7 @@
+// Assuming you have a model file named labreport_data.js
 "use strict";
 module.exports = (sequelize, DataTypes) => {
-  const LapReportData = sequelize.define(
+  const LabReportData = sequelize.define(
     "labreport_data",
     {
       id: {
@@ -12,29 +13,29 @@ module.exports = (sequelize, DataTypes) => {
       labReoprtFk: {
         type: DataTypes.INTEGER,
         allowNull: false,
-        references: {         // User belongsTo Company 1:1
-          model: 'lab_report',
+        references: {
+          model: 'lab_report', // Ensure this matches your lab_report model name
           key: 'id'
         }
       },
       refRangeFk: {
         type: DataTypes.INTEGER,
         allowNull: false,
-        references: {         // User belongsTo Company 1:1
+        references: {
           model: 'ref_range_data',
           key: 'id'
         }
       },
-      key:{
+      key: {
         type: DataTypes.STRING,
         allowNull: false,
       },
-      value:{
+      value: {
         type: DataTypes.STRING,
         allowNull: false,
       },
-      isPending:{
-        type:DataTypes.BOOLEAN,
+      isPending: {
+        type: DataTypes.BOOLEAN,
         defaultValue: false,
         allowNull: false,
       },
@@ -43,14 +44,20 @@ module.exports = (sequelize, DataTypes) => {
       tableName: "labreport_data",
       timestamps: true,
     }
-  )
-  LapReportData.associate = function(models) {
-    LapReportData.hasMany(models.lab_report, { 
-      foreignKey: { name: 'labReoprtFk' },
-      as: 'labReoprt'})
-      LapReportData.hasMany(models.lab_report, { 
-        foreignKey: { name: 'refRangeFk' },
-        as: 'refRange'})
+  );
+
+  LabReportData.associate = function(models) {
+    // Define associations
+    LabReportData.belongsTo(models.lab_report, { 
+      foreignKey: 'labReoprtFk',
+      as: 'labReport'
+    });
+
+    LabReportData.belongsTo(models.ref_range_data, { 
+      foreignKey: 'refRangeFk',
+      as: 'refRangeData'
+    });
   };
-  return LapReportData;
+
+  return LabReportData;
 };

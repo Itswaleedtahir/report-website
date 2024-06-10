@@ -1,6 +1,6 @@
 const { exec } = require('child_process');
 const {onRequest} = require("firebase-functions/v2/https");
-const {pdf_email,labreport_data ,lab_report,labreport_email} = require("./models/index");
+const {pdf_email,labreport_data ,lab_report,labreport_email,ref_range_data} = require("./models/index");
 const { Storage } = require('@google-cloud/storage');
 const { Parser } = require('json2csv');
 const path = require('path');
@@ -64,9 +64,9 @@ exports.LabReport= onRequest(async (req, res) => {
   }
 })
 
-exports.LabReportData= onRequest(async (req, res) => {
+exports.LabReportData = onRequest(async (req, res) => {
   try {
-    const labReoprtFk = 2; // This can be dynamic if needed
+    const labReoprtFk = 1; // This can be dynamic if needed
     const labDataArray = req.body; // Assuming req.body is an array of objects
 
     // Validate that req.body is an array
@@ -74,16 +74,53 @@ exports.LabReportData= onRequest(async (req, res) => {
         return res.status(400).send("Error: Expected an array of lab report data objects");
     }
 
-    // Create an array to hold the save operations
-    const saveOperations = labDataArray.map(data => {
-        const { key, value, refValue, isPending } = data;
-        return new labreport_data({
+    // Create a map to store processed combinations for ref_range_data
+    const refRangeDataMap = new Map();
+
+    // First, handle the ref_range_data entries
+    for (const data of labDataArray) {
+        const { lab_provider, key, refValue } = data;
+
+        // Create a unique key for the map
+        const mapKey = `${lab_provider}_${key}`;
+
+        // Check if the key and lab_provider exist in the map
+        if (!refRangeDataMap.has(mapKey)) {
+            let refRangeData = await ref_range_data.findOne({ 
+                where: { 
+                    key: key, 
+                    labProvider: lab_provider 
+                } 
+            });
+
+            // If it doesn't exist in the database, create it
+            if (!refRangeData) {
+                refRangeData = await ref_range_data.create({ key: key, labProvider: lab_provider, refValue: refValue });
+            }
+
+            // Store the primary key in the map
+            refRangeDataMap.set(mapKey, refRangeData.id); // Ensure to use the correct attribute
+        }
+    }
+
+    // Now, handle the labreport_data entries
+    const saveOperations = labDataArray.map(async (data) => {
+        const { lab_provider, key, value, isPending } = data;
+
+        // Create a unique key for the map
+        const mapKey = `${lab_provider}_${key}`;
+
+        // Get the foreign key from the map
+        const refRangeDataId = refRangeDataMap.get(mapKey);
+
+        // Save the lab report data with the foreign key from ref_range_data
+        return labreport_data.create({
             labReoprtFk: labReoprtFk,
             key: key,
             value: value,
-            refValue: refValue,
-            isPending: isPending
-        }).save();
+            isPending: isPending,
+            refRangeFk: refRangeDataId // Assuming id is the primary key of ref_range_data
+        });
     });
 
     // Execute all save operations
@@ -91,24 +128,29 @@ exports.LabReportData= onRequest(async (req, res) => {
     console.log(savedData);
 
     return res.status(200).send("OK");
-} catch (error) {
+  } catch (error) {
     console.log(error);
     return res.status(500).send("Error: " + error.message);
-}
-
-})
-
+  }
+});
 
 
 exports.MakeCSV = onRequest(async (req, res) => {
   const { id, email, emailStatus } = req.body;
 
   try {
-    // Fetch the data from the database
+    // Fetch the data from the database including ref_range_data
     const data = await labreport_data.findAll({
       where: {
         labReoprtFk: id,
-      }
+      },
+      include: [
+        {
+          model: ref_range_data,
+          as: 'refRangeData', // Alias for the association
+          attributes: ['refValue'] // Include specific attributes if needed
+        }
+      ]
     });
 
     if (data.length === 0) {
@@ -116,7 +158,18 @@ exports.MakeCSV = onRequest(async (req, res) => {
     }
 
     // Convert the data to JSON format
-    const jsonData = data.map(record => record.toJSON());
+    const jsonData = data.map(record => {
+      // Access ref_range_data attributes via the alias 'refRangeData'
+      return {
+        id: record.id,
+        key: record.key,
+        value: record.value,
+        refValue: record.refRangeData ? record.refRangeData.refValue : '', // Access refValue from ref_range_data
+        isPending: record.isPending,
+        createdAt: record.createdAt,
+        updatedAt: record.updatedAt
+      };
+    });
 
     // Define fields for CSV, excluding labReoprtFk and protocolId
     const fields = ['id', 'key', 'value', 'refValue', 'isPending', 'createdAt', 'updatedAt'];
@@ -159,3 +212,5 @@ exports.MakeCSV = onRequest(async (req, res) => {
     return res.status(500).send({ message: 'Internal server error' });
   }
 });
+
+
