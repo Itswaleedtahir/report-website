@@ -1,33 +1,48 @@
 const { exec } = require('child_process');
 const {onRequest} = require("firebase-functions/v2/https");
 const {pdf_email,labreport_data ,lab_report,labreport_email,ref_range_data} = require("./models/index");
-const { Storage } = require('@google-cloud/storage');
+const {UplaodFile,PdfEmail,labReport}= require("./helper/GpData")
 const { Parser } = require('json2csv');
-const path = require('path');
 
-const fs = require('fs');
 
-// Create the credentials object from environment variables
-const googleCredentials = {
-  type:process.env.GCLOUT_TYPE,
-  project_id: process.env.GCLOUD_PROJECT_ID,
-  private_key_id: process.env.GCLOUD_PRIVATE_KEY_ID,
-  private_key: process.env.GCLOUD_PRIVATE_KEY,
-  client_email: process.env.GCLOUD_CLIENT_EMAIL,
-  client_id: process.env.GCLOUD_CLIENT_ID,
-  auth_uri: process.env.GCLOUD_AUTH_URI,
-  token_uri: process.env.GCLOUD_TOKEN_URI,
-  auth_provider_x509_cert_url: process.env.GCLOUD_AUTH_PROVIDER_X509_CERT_URL,
-  client_x509_cert_url: process.env.GCLOUD_CLIENT_X509_CERT_URL,
-  universe_domain:process.env.GCLOUD_UNIVERSE_DOMAIN
-};
-const storage = new Storage({projectId: 'gp-data-1-0', credentials: googleCredentials });
+exports.SendGridEmailListener = onRequest(async (req, res) => {
+  try {
+    const { Name, Subject, From, Received, Attachment } = req.body;
+    console.log(req.body);
 
-exports.SendGridEmailListener= onRequest((req,res)=>{
-      const body = req.body
-      console.log("body",body)
-      return res.status(200).send("helloooooo")
-})
+    if (!Attachment) {
+      return res.status(400).send("No attachment URL found in the request.");
+    }
+
+    // Call function to upload file and get necessary data
+    const { pdfname, destination } = await UplaodFile(Attachment, From);
+    const pdfURL = `${process.env.STORAGE_URL}${destination}`
+
+    const{ pdfEmailId } = await PdfEmail(From,Received,pdfname,destination)
+
+    // Example data for lab_report
+    const data = {
+      "protocolId": "MGL-3196-19",
+      "investigator": "Dr. Anita Kohli",
+      "subjectId": "0128-9013",
+      "dateOfCollection": "20-Dec-202",
+      "timePoint": "Week 40",
+    };
+
+    const {labReportId} = await labReport(data,pdfEmailId)
+    
+    // Return success response
+    return res.status(200).send({
+      message: "Records inserted successfully.",
+      pdfEmailId: pdfEmailId,
+      labReportId: labReportId,
+    });
+
+  } catch (error) {
+    console.error("Error processing request:", error);
+    return res.status(500).send("Error processing request.");
+  }
+});
 
 exports.runMigrations =onRequest((req, res) => {
   exec('npx sequelize-cli db:migrate', (error, stdout, stderr) => {
