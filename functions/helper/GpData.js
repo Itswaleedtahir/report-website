@@ -1,6 +1,7 @@
 const axios = require('axios');
+const { Parser } = require('json2csv');
 const { Storage } = require('@google-cloud/storage');
-const {pdf_email,labreport_data ,lab_report,labreport_email,ref_range_data} = require("../models/index");
+const {pdf_email,labreport_data ,lab_report,labreport_email_csv,ref_range_data} = require("../models/index");
 
 // Create the credentials object from environment variables
 const googleCredentials = {
@@ -57,7 +58,7 @@ const UplaodFile = async (Attachment, From) => {
   }
 };
 
-const PdfEmail = async(From,Received,pdfname,destination)=>{
+const PdfEmail = async(From,Received,pdfname,destination,To)=>{
 
          // Create pdf_email record
     const pdfEmail = await pdf_email.create({
@@ -65,6 +66,7 @@ const PdfEmail = async(From,Received,pdfname,destination)=>{
         receivedAt: Received,
         pdfName: pdfname,
         pdfPath: destination,
+        To:To
       });
       const pdfEmailId = pdfEmail.id;
       return { pdfEmailId };
@@ -86,8 +88,142 @@ const labReport = async (data,pdfEmailId)=>{
        return {labReportId}
 }
 
+const labReoprtData = async(labDataArray,labReportId)=>{
+
+      // Create a map to store processed combinations for ref_range_data
+      const refRangeDataMap = new Map();
+
+      // First, handle the ref_range_data entries
+      for (const data of labDataArray) {
+          const { lab_provider, key, refValue } = data;
+  
+          // Create a unique key for the map
+          const mapKey = `${lab_provider}_${key}`;
+  
+          // Check if the key and lab_provider exist in the map
+          if (!refRangeDataMap.has(mapKey)) {
+              let refRangeData = await ref_range_data.findOne({ 
+                  where: { 
+                      key: key, 
+                      labProvider: lab_provider 
+                  } 
+              });
+  
+              // If it doesn't exist in the database, create it
+              if (!refRangeData) {
+                  refRangeData = await ref_range_data.create({ key: key, labProvider: lab_provider, refValue: refValue });
+              }
+  
+              // Store the primary key in the map
+              refRangeDataMap.set(mapKey, refRangeData.id); // Ensure to use the correct attribute
+          }
+      }
+      let labreportDataId 
+      // Now, handle the labreport_data entries
+      const saveOperations = labDataArray.map(async (data) => {
+          const { lab_provider, key, value, isPending } = data;
+  
+          // Create a unique key for the map
+          const mapKey = `${lab_provider}_${key}`;
+  
+          // Get the foreign key from the map
+          const refRangeDataId = refRangeDataMap.get(mapKey);
+  
+          // Save the lab report data with the foreign key from ref_range_data
+          return labreport_data.create({
+              labReoprtFk: labReportId,
+              key: key,
+              value: value,
+              isPending: isPending,
+              refRangeFk: refRangeDataId // Assuming id is the primary key of ref_range_data
+          });
+      });
+  
+      // Execute all save operations
+      const savedData = await Promise.all(saveOperations);
+      console.log(savedData);
+}
+
+const MakeCsv = async(id,email,emailStatus)=>{
+  try {
+    // Fetch the data from the database including ref_range_data
+    const data = await labreport_data.findAll({
+      where: {
+        labReoprtFk: id,
+      },
+      include: [
+        {
+          model: ref_range_data,
+          as: 'refRangeData', // Alias for the association
+          attributes: ['refValue'] // Include specific attributes if needed
+        }
+      ]
+    });
+
+    if (data.length === 0) {
+      return res.status(404).send({ message: 'No data found' });
+    }
+
+    // Convert the data to JSON format
+    const jsonData = data.map(record => {
+      // Access ref_range_data attributes via the alias 'refRangeData'
+      return {
+        id: record.id,
+        key: record.key,
+        value: record.value,
+        refValue: record.refRangeData ? record.refRangeData.refValue : '', // Access refValue from ref_range_data
+        isPending: record.isPending,
+        createdAt: record.createdAt,
+        updatedAt: record.updatedAt
+      };
+    });
+
+    // Define fields for CSV, excluding labReoprtFk and protocolId
+    const fields = ['id', 'key', 'value', 'refValue', 'isPending', 'createdAt', 'updatedAt'];
+    const opts = { fields };
+
+    // Convert JSON to CSV
+    const parser = new Parser(opts);
+    const csv = parser.parse(jsonData);
+
+    // Generate timestamp
+    const timestamp = new Date().toISOString().replace(/[-:.]/g, "").replace("T", "_").replace("Z", "");
+
+    // Define the path to save the CSV file in Google Cloud Storage
+    const bucketName = 'gpdata01'; // Replace with your bucket name
+    const destination = `reports/report_${id}_${timestamp}.csv`;
+
+    // Create a buffer from the CSV string
+    const buffer = Buffer.from(csv, 'utf-8');
+
+    // Upload the buffer to Google Cloud Storage
+    const file = storage.bucket(bucketName).file(destination);
+    await file.save(buffer, {
+      contentType: 'text/csv',
+    });
+
+    // Save email record in the database
+    await labreport_email_csv.create({
+      labReoprtFk: id,
+      csvPath: destination,
+      email: email,
+      emailStatus: emailStatus
+    });
+
+    // Respond with the URL to the uploaded file
+    const publicUrl = `https://storage.googleapis.com/${bucketName}/${destination}`;
+
+    return{ message: 'CSV file created and uploaded', url: publicUrl };
+  } catch (error) {
+    console.error('Error creating or uploading CSV:', error);
+    return res.status(500).send({ message: 'Internal server error' });
+  }
+}
+
 module.exports = {
   UplaodFile,
   PdfEmail,
-  labReport
+  labReport,
+  labReoprtData,
+  MakeCsv
 };

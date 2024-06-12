@@ -1,7 +1,7 @@
 "use strict";
 module.exports = (sequelize, DataTypes) => {
   const LapReportEmail = sequelize.define(
-    "labreport_email",
+    "labreport_email_csv",
     {
       id: {
         allowNull: false,
@@ -31,7 +31,7 @@ module.exports = (sequelize, DataTypes) => {
       },
     },
     {
-      tableName: "labreport_email",
+      tableName: "labreport_email_csv",
       timestamps: true,
     }
   )

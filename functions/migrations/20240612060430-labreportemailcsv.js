@@ -2,7 +2,7 @@
 
 module.exports = {
   up: async (queryInterface, Sequelize) => {
-    await queryInterface.createTable('labreport_email', {
+    await queryInterface.createTable('labreport_email_csv', {
       id: {
         allowNull: false,
         autoIncrement: true,
@@ -40,6 +40,6 @@ module.exports = {
     });
   },
   down: async (queryInterface, Sequelize) => {
-    await queryInterface.dropTable('labreport_email');
+    await queryInterface.dropTable('labreport_email_csv');
   }
 };
