@@ -26,7 +26,7 @@ module.exports = (sequelize, DataTypes) => {
           key: 'id'
         }
       },
-      key: {
+      laboratory_name: {
         type: DataTypes.STRING,
         allowNull: false,
       },

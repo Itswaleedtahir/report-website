@@ -95,23 +95,23 @@ const labReoprtData = async(labDataArray,labReportId)=>{
 
       // First, handle the ref_range_data entries
       for (const data of labDataArray) {
-          const { lab_provider, key, refValue } = data;
+          const { lab_provider, laboratory_name, refValue } = data;
   
           // Create a unique key for the map
-          const mapKey = `${lab_provider}_${key}`;
+          const mapKey = `${lab_provider}_${laboratory_name}`;
   
           // Check if the key and lab_provider exist in the map
           if (!refRangeDataMap.has(mapKey)) {
               let refRangeData = await ref_range_data.findOne({ 
                   where: { 
-                      key: key, 
+                    laboratory_name: laboratory_name, 
                       labProvider: lab_provider 
                   } 
               });
   
               // If it doesn't exist in the database, create it
               if (!refRangeData) {
-                  refRangeData = await ref_range_data.create({ key: key, labProvider: lab_provider, refValue: refValue });
+                  refRangeData = await ref_range_data.create({ laboratory_name: laboratory_name, labProvider: lab_provider, refValue: refValue });
               }
   
               // Store the primary key in the map
@@ -121,10 +121,10 @@ const labReoprtData = async(labDataArray,labReportId)=>{
       let labreportDataId 
       // Now, handle the labreport_data entries
       const saveOperations = labDataArray.map(async (data) => {
-          const { lab_provider, key, value, isPending } = data;
+          const { lab_provider, laboratory_name, value, isPending } = data;
   
           // Create a unique key for the map
-          const mapKey = `${lab_provider}_${key}`;
+          const mapKey = `${lab_provider}_${laboratory_name}`;
   
           // Get the foreign key from the map
           const refRangeDataId = refRangeDataMap.get(mapKey);
@@ -132,7 +132,7 @@ const labReoprtData = async(labDataArray,labReportId)=>{
           // Save the lab report data with the foreign key from ref_range_data
           return labreport_data.create({
               labReoprtFk: labReportId,
-              key: key,
+              laboratory_name: laboratory_name,
               value: value,
               isPending: isPending,
               refRangeFk: refRangeDataId // Assuming id is the primary key of ref_range_data
@@ -169,7 +169,7 @@ const MakeCsv = async(id,email,emailStatus)=>{
       // Access ref_range_data attributes via the alias 'refRangeData'
       return {
         id: record.id,
-        key: record.key,
+        laboratory_name: record.laboratory_name,
         value: record.value,
         refValue: record.refRangeData ? record.refRangeData.refValue : '', // Access refValue from ref_range_data
         isPending: record.isPending,
@@ -179,7 +179,7 @@ const MakeCsv = async(id,email,emailStatus)=>{
     });
 
     // Define fields for CSV, excluding labReoprtFk and protocolId
-    const fields = ['id', 'key', 'value', 'refValue', 'isPending', 'createdAt', 'updatedAt'];
+    const fields = ['id', 'laboratory_name', 'value', 'refValue', 'isPending', 'createdAt', 'updatedAt'];
     const opts = { fields };
 
     // Convert JSON to CSV

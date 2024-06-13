@@ -15,7 +15,7 @@ exports.SendGridEmailListener = onRequest(async (req, res) => {
     // Call function to upload file and get necessary data
     const { pdfname, destination } = await UplaodFile(Attachment, From);
     const pdfURL = `${process.env.STORAGE_URL}${destination}`
-
+    console.log("urlllllll", pdfURL)
     const{ pdfEmailId } = await PdfEmail(From,Received,pdfname,destination,To)
 
     // Example data for lab_report
@@ -32,23 +32,23 @@ exports.SendGridEmailListener = onRequest(async (req, res) => {
     const labdata= [
       {
       "lab_provider":"Medpace",
-      "key":"Hyaluronic",
+      "laboratory_name":"Hyaluronic",
       "value":"511.19",
       "refValue":"120"
   },{
       "lab_provider":"Medpace",
-      "key":" Acid",
+      "laboratory_name":" Acid",
       "value":"511.19",
       "refValue":"120"
   },{
       "lab_provider":"Medpace",
-      "key":"Hyaluronic Acid",
+      "laboratory_name":"Hyaluronic Acid",
       "value":"511.19",
       "refValue":"120"
   },
   {
     "lab_provider":"Medpace",
-    "key":"Hyaluronic Acid",
+    "laboratory_name":"Hyaluronic Acid",
     "value":"511.19",
     "refValue":"120"
 }
