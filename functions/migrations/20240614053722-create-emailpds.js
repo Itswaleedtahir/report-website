@@ -2,41 +2,32 @@
 
 module.exports = {
   up: async (queryInterface, Sequelize) => {
-    await queryInterface.createTable('labreport_data', {
+    await queryInterface.createTable('pdf_email', {
       id: {
         allowNull: false,
         autoIncrement: true,
         primaryKey: true,
         type: Sequelize.INTEGER
       },
-      labReoprtFk: {
+      userEmailFk: {
         type: Sequelize.INTEGER,
         allowNull: false,
         references: {         // User belongsTo Company 1:1
-          model: 'lab_report',
+          model: 'users',
           key: 'id'
         }
       },
-      refRangeFk: {
-        type: Sequelize.INTEGER,
-        allowNull: false,
-        references: {         // User belongsTo Company 1:1
-          model: 'ref_range_data',
-          key: 'id'
-        }
+      email_to: {
+        type: Sequelize.STRING
       },
-      key:{
-        type: Sequelize.STRING,
-        allowNull: false,
+      receivedAt: {
+        type: Sequelize.DATE
       },
-      value:{
-        type: Sequelize.STRING,
-        allowNull: false,
+      pdfName:{
+        type: Sequelize.STRING
       },
-      isPending:{
-        type:Sequelize.BOOLEAN,
-        defaultValue: false,
-        allowNull: false,
+      pdfPath:{
+        type: Sequelize.STRING
       },
       createdAt: {
         allowNull: false,
@@ -49,6 +40,6 @@ module.exports = {
     });
   },
   down: async (queryInterface, Sequelize) => {
-    await queryInterface.dropTable('labreport_data');
+    await queryInterface.dropTable('pdf_email');
   }
 };

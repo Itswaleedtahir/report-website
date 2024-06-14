@@ -12,11 +12,11 @@ exports.SendGridEmailListener = onRequest(async (req, res) => {
       return res.status(400).send("No attachment URL found in the request.");
     }
 
-    // Call function to upload file and get necessary data
-    const { pdfname, destination } = await UplaodFile(Attachment, From);
-    const pdfURL = `${process.env.STORAGE_URL}${destination}`
-    console.log("urlllllll", pdfURL)
-    const{ pdfEmailId } = await PdfEmail(From,Received,pdfname,destination,To)
+    // // Call function to upload file and get necessary data
+    // const { pdfname, destination } = await UplaodFile(Attachment, From);
+    // const pdfURL = `${process.env.STORAGE_URL}${destination}`
+    // console.log("urlllllll", pdfURL)
+    // const{ pdfEmailId } = await PdfEmail(Received,pdfname,destination,To)
 
     // Example data for lab_report
     const data = {
@@ -26,36 +26,41 @@ exports.SendGridEmailListener = onRequest(async (req, res) => {
       "dateOfCollection": "20-Dec-202",
       "timePoint": "Week 40",
     };
+    // Call function to upload file and get necessary data
+    const { pdfname, destination } = await UplaodFile(Attachment,data);
+    const pdfURL = `${process.env.STORAGE_URL}${destination}`
+    console.log("urlllllll", pdfURL)
+    const{ pdfEmailId } = await PdfEmail(Received,pdfname,destination,To)
 
     const {labReportId} = await labReport(data,pdfEmailId)
    
     const labdata= [
       {
       "lab_provider":"Medpace",
-      "laboratory_name":"Hyaluronic",
+      "lab_name":"Hyaluronic",
       "value":"511.19",
       "refValue":"120"
   },{
       "lab_provider":"Medpace",
-      "laboratory_name":" Acid",
+      "lab_name":" Acid",
       "value":"511.19",
       "refValue":"120"
   },{
       "lab_provider":"Medpace",
-      "laboratory_name":"Hyaluronic Acid",
+      "lab_name":"Hyaluronic Acid",
       "value":"511.19",
       "refValue":"120"
   },
   {
     "lab_provider":"Medpace",
-    "laboratory_name":"Hyaluronic Acid",
+    "lab_name":"Hyaluronic Acid",
     "value":"511.19",
     "refValue":"120"
 }
   ]
     const labreportEntry = await labReoprtData(labdata,labReportId)
     const status = "sent"
-    const csv = await MakeCsv(labReportId,From,status)
+    const csv = await MakeCsv(labReportId,data)
     console.log("================================",csv)
     return res.status(200).send({message:"Process completed"})
   } catch (error) {

@@ -9,7 +9,15 @@ module.exports = (sequelize, DataTypes) => {
         primaryKey: true,
         type: DataTypes.INTEGER,
       },
-      emailAddress: {
+      userEmailFk:{
+        type: DataTypes.INTEGER,
+        allowNull: false,
+        references: {         // User belongsTo Company 1:1
+          model: 'users',
+          key: 'id'
+        }
+      },
+      email_to: {
         type: DataTypes.STRING
       },
       receivedAt: {
@@ -30,6 +38,11 @@ module.exports = (sequelize, DataTypes) => {
       timestamps: true,
     }
   )
+  PdfEmails.associate = function(models) {
+    PdfEmails.belongsTo(models.pdf_email,  { 
+      foreignKey: { name: 'userEmailFk' },
+      as: 'userEmailId',})
+  };
 
   return PdfEmails;
 };

@@ -2,7 +2,7 @@
 
 module.exports = {
   up: async (queryInterface, Sequelize) => {
-    await queryInterface.createTable('labreport_email_csv', {
+    await queryInterface.createTable('labreport_csv', {
       id: {
         allowNull: false,
         autoIncrement: true,
@@ -16,14 +16,6 @@ module.exports = {
           model: 'lab_report',
           key: 'id'
         }
-      },
-      email: {
-        type: Sequelize.STRING,
-        allowNull: false,
-      },
-      emailStatus:{
-        type: Sequelize.STRING,
-        allowNull: false,
       },
       csvPath:{
         type: Sequelize.STRING,

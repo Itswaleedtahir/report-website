@@ -1,7 +1,7 @@
 const axios = require('axios');
 const { Parser } = require('json2csv');
 const { Storage } = require('@google-cloud/storage');
-const {pdf_email,labreport_data ,lab_report,labreport_email_csv,ref_range_data} = require("../models/index");
+const {pdf_email,labreport_data ,lab_report,labreport_csv,ref_range_data} = require("../models/index");
 
 // Create the credentials object from environment variables
 const googleCredentials = {
@@ -20,53 +20,64 @@ const googleCredentials = {
 
 const storage = new Storage({ projectId: 'gp-data-1-0', credentials: googleCredentials });
 
-const UplaodFile = async (Attachment, From) => {
-  try {
-    // Generate a file name using the email and timestamp
-    const sanitizedEmail = From.replace(/[^a-zA-Z0-9]/g, '_');
-    const timestamp = Date.now();
-    const bucketName = 'gpdata01'; // Replace with your bucket name
-    const pdfname = `${sanitizedEmail}_${timestamp}.pdf`;
-    const destination = `pdf/${pdfname}`;
+const UplaodFile = async (Attachment,data) => {
+    const { protocolId, subjectId, investigator, timePoint } = data;
 
-    // Create a write stream to Google Cloud Storage
-    const bucket = storage.bucket(bucketName);
-    const file = bucket.file(destination);
-    const writeStream = file.createWriteStream();
-
-    // Download the file from the attachment URL and pipe it directly to the Cloud Storage write stream
-    const response = await axios({
-      url: Attachment,
-      method: 'GET',
-      responseType: 'stream',
-    });
+    // Sanitize the input data to ensure they can be used in a file name
+    const sanitizedProtocolId = protocolId.replace(/[^a-zA-Z0-9]/g, '_');
+    const sanitizedSubjectId = subjectId.replace(/[^a-zA-Z0-9]/g, '_');
+    const sanitizedInvestigator = investigator.replace(/[^a-zA-Z0-9]/g, '_');
+    const sanitizedTimePoint = timePoint.replace(/[^a-zA-Z0-9]/g, '_');
     
-    await new Promise((resolve, reject) => {
-      response.data.pipe(writeStream)
-        .on('error', reject)
-        .on('finish', resolve);
-    });
+   // Generate the timestamp
+   const timestamp = new Date().toISOString().replace(/[-:.]/g, "").replace("T", "_").replace("Z", "");
 
-    // Return details after upload completes successfully
-    const publicUrl = `https://storage.googleapis.com/${bucketName}/${destination}`;
-    console.log('File uploaded to Google Cloud Storage successfully.', publicUrl);
-    return { pdfname, destination };
 
-  } catch (err) {
-    console.error("Error uploading file:", err);
-    throw err;
-  }
+    // Generate the file name using the naming rule
+    const pdfname = `${sanitizedProtocolId}.${sanitizedSubjectId}.${sanitizedInvestigator}.${sanitizedTimePoint}.${timestamp}.pdf`;
+    const bucketName = 'gpdata01'; // Replace with your bucket name
+    const destination = `pdf/${pdfname}`;
+    
+    try {
+      // Create a write stream to Google Cloud Storage
+      const bucket = storage.bucket(bucketName);
+      const file = bucket.file(destination);
+      const writeStream = file.createWriteStream();
+    
+      // Download the file from the attachment URL and pipe it directly to the Cloud Storage write stream
+      const response = await axios({
+        url: Attachment,
+        method: 'GET',
+        responseType: 'stream',
+      });
+    
+      await new Promise((resolve, reject) => {
+        response.data.pipe(writeStream)
+          .on('error', reject)
+          .on('finish', resolve);
+      });
+    
+      // Return details after upload completes successfully
+      const publicUrl = `https://storage.googleapis.com/${bucketName}/${destination}`;
+      console.log('File uploaded to Google Cloud Storage successfully.', publicUrl);
+      return { pdfname, destination };
+    
+    } catch (err) {
+      console.error("Error uploading file:", err);
+      throw err;
+    }
+    
 };
 
-const PdfEmail = async(From,Received,pdfname,destination,To)=>{
-
+const PdfEmail = async(Received,pdfname,destination,To)=>{
+        const userEmailFk=1 //to be replaced with real as for now its dummy
          // Create pdf_email record
     const pdfEmail = await pdf_email.create({
-        emailAddress: From,
+        email_to: To,
         receivedAt: Received,
         pdfName: pdfname,
         pdfPath: destination,
-        To:To
+        userEmailFk:userEmailFk
       });
       const pdfEmailId = pdfEmail.id;
       return { pdfEmailId };
@@ -89,65 +100,71 @@ const labReport = async (data,pdfEmailId)=>{
 }
 
 const labReoprtData = async(labDataArray,labReportId)=>{
+try {
+   // Create a map to store processed combinations for ref_range_data
+   const refRangeDataMap = new Map();
 
-      // Create a map to store processed combinations for ref_range_data
-      const refRangeDataMap = new Map();
+   // First, handle the ref_range_data entries
+   for (const data of labDataArray) {
+       const { lab_provider, lab_name, refValue } = data;
 
-      // First, handle the ref_range_data entries
-      for (const data of labDataArray) {
-          const { lab_provider, laboratory_name, refValue } = data;
-  
-          // Create a unique key for the map
-          const mapKey = `${lab_provider}_${laboratory_name}`;
-  
-          // Check if the key and lab_provider exist in the map
-          if (!refRangeDataMap.has(mapKey)) {
-              let refRangeData = await ref_range_data.findOne({ 
-                  where: { 
-                    laboratory_name: laboratory_name, 
-                      labProvider: lab_provider 
-                  } 
-              });
-  
-              // If it doesn't exist in the database, create it
-              if (!refRangeData) {
-                  refRangeData = await ref_range_data.create({ laboratory_name: laboratory_name, labProvider: lab_provider, refValue: refValue });
-              }
-  
-              // Store the primary key in the map
-              refRangeDataMap.set(mapKey, refRangeData.id); // Ensure to use the correct attribute
-          }
-      }
-      let labreportDataId 
-      // Now, handle the labreport_data entries
-      const saveOperations = labDataArray.map(async (data) => {
-          const { lab_provider, laboratory_name, value, isPending } = data;
-  
-          // Create a unique key for the map
-          const mapKey = `${lab_provider}_${laboratory_name}`;
-  
-          // Get the foreign key from the map
-          const refRangeDataId = refRangeDataMap.get(mapKey);
-  
-          // Save the lab report data with the foreign key from ref_range_data
-          return labreport_data.create({
-              labReoprtFk: labReportId,
-              laboratory_name: laboratory_name,
-              value: value,
-              isPending: isPending,
-              refRangeFk: refRangeDataId // Assuming id is the primary key of ref_range_data
-          });
-      });
-  
-      // Execute all save operations
-      const savedData = await Promise.all(saveOperations);
-      console.log(savedData);
+       // Create a unique key for the map
+       const mapKey = `${lab_provider}_${lab_name}`;
+
+       // Check if the key and lab_provider exist in the map
+       if (!refRangeDataMap.has(mapKey)) {
+           let refRangeData = await ref_range_data.findOne({ 
+               where: { 
+                 lab_name: lab_name, 
+                   labProvider: lab_provider 
+               } 
+           });
+
+           // If it doesn't exist in the database, create it
+           if (!refRangeData) {
+               refRangeData = await ref_range_data.create({ lab_name: lab_name, labProvider: lab_provider, refValue: refValue });
+           }
+
+           // Store the primary key in the map
+           refRangeDataMap.set(mapKey, refRangeData.id); // Ensure to use the correct attribute
+       }
+   }
+   let labreportDataId 
+   // Now, handle the labreport_data entries
+   const saveOperations = labDataArray.map(async (data) => {
+       const { lab_provider, lab_name, value, isPending } = data;
+
+       // Create a unique key for the map
+       const mapKey = `${lab_provider}_${lab_name}`;
+
+       // Get the foreign key from the map
+       const refRangeDataId = refRangeDataMap.get(mapKey);
+
+       // Save the lab report data with the foreign key from ref_range_data
+       return labreport_data.create({
+           labReoprtFk: labReportId,
+           lab_name: lab_name,
+           value: value,
+           isPending: isPending,
+           refRangeFk: refRangeDataId // Assuming id is the primary key of ref_range_data
+       });
+   });
+
+   // Execute all save operations
+   const savedData = await Promise.all(saveOperations);
+   console.log(savedData);
+} catch (error) {
+  console.log(error)
+  return error
+}
 }
 
-const MakeCsv = async(id,email,emailStatus)=>{
+const MakeCsv = async (id, data) => {
   try {
+    const { protocolId, subjectId, investigator, timePoint } = data;
+
     // Fetch the data from the database including ref_range_data
-    const data = await labreport_data.findAll({
+    const fetchedData = await labreport_data.findAll({
       where: {
         labReoprtFk: id,
       },
@@ -160,16 +177,16 @@ const MakeCsv = async(id,email,emailStatus)=>{
       ]
     });
 
-    if (data.length === 0) {
-      return res.status(404).send({ message: 'No data found' });
+    if (fetchedData.length === 0) {
+      return { message: 'No data found' };
     }
 
     // Convert the data to JSON format
-    const jsonData = data.map(record => {
+    const jsonData = fetchedData.map(record => {
       // Access ref_range_data attributes via the alias 'refRangeData'
       return {
         id: record.id,
-        laboratory_name: record.laboratory_name,
+        lab_name: record.lab_name,
         value: record.value,
         refValue: record.refRangeData ? record.refRangeData.refValue : '', // Access refValue from ref_range_data
         isPending: record.isPending,
@@ -179,19 +196,26 @@ const MakeCsv = async(id,email,emailStatus)=>{
     });
 
     // Define fields for CSV, excluding labReoprtFk and protocolId
-    const fields = ['id', 'laboratory_name', 'value', 'refValue', 'isPending', 'createdAt', 'updatedAt'];
+    const fields = ['lab_name', 'value', 'refValue', 'isPending', 'createdAt', 'updatedAt'];
     const opts = { fields };
 
     // Convert JSON to CSV
     const parser = new Parser(opts);
     const csv = parser.parse(jsonData);
 
-    // Generate timestamp
+    // Sanitize the input data to ensure they can be used in a file name
+    const sanitizedProtocolId = protocolId.replace(/[^a-zA-Z0-9]/g, '_');
+    const sanitizedSubjectId = subjectId.replace(/[^a-zA-Z0-9]/g, '_');
+    const sanitizedInvestigator = investigator.replace(/[^a-zA-Z0-9]/g, '_');
+    const sanitizedTimePoint = timePoint.replace(/[^a-zA-Z0-9]/g, '_');
+
+    // Generate the timestamp
     const timestamp = new Date().toISOString().replace(/[-:.]/g, "").replace("T", "_").replace("Z", "");
 
-    // Define the path to save the CSV file in Google Cloud Storage
+    // Generate the file name using the naming rule
+    const csvName = `${sanitizedProtocolId}.${sanitizedSubjectId}.${sanitizedInvestigator}.${sanitizedTimePoint}_${timestamp}.csv`;
     const bucketName = 'gpdata01'; // Replace with your bucket name
-    const destination = `reports/report_${id}_${timestamp}.csv`;
+    const destination = `reports/${csvName}`;
 
     // Create a buffer from the CSV string
     const buffer = Buffer.from(csv, 'utf-8');
@@ -203,22 +227,22 @@ const MakeCsv = async(id,email,emailStatus)=>{
     });
 
     // Save email record in the database
-    await labreport_email_csv.create({
+    await labreport_csv.create({
       labReoprtFk: id,
       csvPath: destination,
-      email: email,
-      emailStatus: emailStatus
     });
 
     // Respond with the URL to the uploaded file
     const publicUrl = `https://storage.googleapis.com/${bucketName}/${destination}`;
 
-    return{ message: 'CSV file created and uploaded', url: publicUrl };
+    return { message: 'CSV file created and uploaded', url: publicUrl };
   } catch (error) {
     console.error('Error creating or uploading CSV:', error);
-    return res.status(500).send({ message: 'Internal server error' });
+    return { error: 'Error creating or uploading CSV' };
   }
 }
+
+
 
 module.exports = {
   UplaodFile,

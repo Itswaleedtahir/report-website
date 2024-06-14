@@ -1,7 +1,7 @@
 "use strict";
 module.exports = (sequelize, DataTypes) => {
   const LapReportEmail = sequelize.define(
-    "labreport_email_csv",
+    "labreport_csv",
     {
       id: {
         allowNull: false,
@@ -17,21 +17,13 @@ module.exports = (sequelize, DataTypes) => {
           key: 'id'
         }
       },
-      email: {
-        type: DataTypes.STRING,
-        allowNull: false,
-      },
-      emailStatus:{
-        type: DataTypes.STRING,
-        allowNull: false,
-      },
       csvPath:{
         type: DataTypes.STRING,
         allowNull: false,
       },
     },
     {
-      tableName: "labreport_email_csv",
+      tableName: "labreport_csv",
       timestamps: true,
     }
   )
