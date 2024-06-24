@@ -37,6 +37,10 @@ module.exports = (sequelize, DataTypes) => {
         type:DataTypes.STRING,
         allowNull: false,
       },
+      email_to: {
+        type: DataTypes.STRING,
+        allowNull: false,
+      },
     },
     {
       tableName: "lab_report",

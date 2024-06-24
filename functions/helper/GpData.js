@@ -1,7 +1,7 @@
 const axios = require('axios');
 const { Parser } = require('json2csv');
 const { Storage } = require('@google-cloud/storage');
-const {pdf_email,labreport_data ,lab_report,labreport_csv,ref_range_data} = require("../models/index");
+const {users,pdf_email,labreport_data ,lab_report,labreport_csv,ref_range_data} = require("../models/index");
 
 // Create the credentials object from environment variables
 const googleCredentials = {
@@ -69,26 +69,40 @@ const UplaodFile = async (Attachment,data) => {
     
 };
 
-const PdfEmail = async(Received,pdfname,destination,To)=>{
-        const userEmailFk=1 //to be replaced with real as for now its dummy
-         // Create pdf_email record
-    const pdfEmail = await pdf_email.create({
-        email_to: To,
-        receivedAt: Received,
-        pdfName: pdfname,
-        pdfPath: destination,
-        userEmailFk:userEmailFk
-      });
-      const pdfEmailId = pdfEmail.id;
-      return { pdfEmailId };
-}
+const PdfEmail = async (Received, pdfname, destination, To) => {
+  try {
+    // Fetch the user ID from the users table
+    const user = await users.findOne({ where: { user_email: To } });
+    if (!user) {
+      throw new Error('User not found');
+    }
 
-const labReport = async (data,pdfEmailId)=>{
+    const userEmailFk = user.id;
+
+    // Create pdf_email record
+    const pdfEmail = await pdf_email.create({
+      email_to: To,
+      receivedAt: Received,
+      pdfName: pdfname,
+      pdfPath: destination,
+      userEmailFk: userEmailFk,
+    });
+
+    const pdfEmailId = pdfEmail.id;
+    return { pdfEmailId };
+  } catch (error) {
+    console.error('Error in PdfEmail function:', error);
+    throw error;
+  }
+};
+
+const labReport = async (data,pdfEmailId,To)=>{
 
      // Create a lab_report record linked to pdf_email
      const labReport = await lab_report.create({
         protocolId: data.protocolId,
         investigator: data.investigator,
+        email_to:To,
         subjectId: data.subjectId,
         dateOfCollection: data.dateOfCollection,
         timePoint: data.timePoint,

@@ -1,7 +1,7 @@
 "use strict";
 module.exports = (sequelize, DataTypes) => {
   const Signup = sequelize.define(
-    "users",
+    "admin",
     {
       id: {
         allowNull: false,
@@ -11,20 +11,16 @@ module.exports = (sequelize, DataTypes) => {
       },
       user_email: {
         type: DataTypes.STRING,
-        allowNull: true,
+        allowNull: false,
         unique: true,
       },
       password: {
         type: DataTypes.STRING,
-        allowNull: true,
+        allowNull: false,
       },
-      token:{
-        type:DataTypes.STRING,
-        allowNull:true
-      }
     },
     {
-      tableName: "users",
+      tableName: "admin",
       timestamps: true,
     }
   );
