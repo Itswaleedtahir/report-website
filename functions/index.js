@@ -3,14 +3,17 @@ const { onRequest } = require("firebase-functions/v2/https");
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
 const { v4: uuidv4 } = require('uuid');
+const cors = require("cors")({ origin: true });
 const sgMail = require('@sendgrid/mail');
 const { Op ,Sequelize} = require("sequelize");
 const { UplaodFile, PdfEmail, labReport, labReoprtData, MakeCsv } = require("./helper/GpData");
 const {users,admin,pdf_email,labreport_data ,lab_report,labreport_csv,ref_range_data} = require("./models/index");
+const { on } = require('events');
 sgMail.setApiKey('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');
 
 
 exports.SendGridEmailListener = onRequest(async (req, res) => {
+ cors(req,res,async()=>{
   try {
     const { Name, Subject, From, Received, Attachment, To } = req.body;
     console.log(req.body);
@@ -153,6 +156,7 @@ exports.SendGridEmailListener = onRequest(async (req, res) => {
     console.error("Error processing request:", error);
     return res.status(500).send("Error processing request.");
   }
+ })
 });
 
 exports.runMigrations = onRequest((req, res) => {
@@ -166,6 +170,7 @@ exports.runMigrations = onRequest((req, res) => {
 });
 
 exports.searchLabReports = onRequest(async (req, res) => {
+ cors(req,res,async()=>{
   try {
     const { searchTerm } = req.body;
 
@@ -204,62 +209,66 @@ const searchCriteria = {
     console.error("Error processing request:", error);
     return res.status(500).send("Error processing request.");
   }
+ })
 });
 
 
 exports.searchLabReportsByFilters = onRequest(async (req, res) => {
-  try {
-    const { protocolId, subjectId } = req.body;
-    const authHeader = req.headers['authorization'];
-    console.log("header",authHeader)
-    const token = authHeader
-    let userDecode;
-    if (!token) {
-      return res.sendStatus(401); // Unauthorized
-    }
+  cors(req,res,async()=>{
+    try {
+      const { protocolId, subjectId } = req.body;
+      const authHeader = req.headers['authorization'];
+      console.log("header",authHeader)
+      const token = authHeader
+      let userDecode;
+      if (!token) {
+        return res.sendStatus(401); // Unauthorized
+      }
+    
+      jwt.verify(token, 'your_secret_key', (err, user) => {
+        if (err) {
+          return res.sendStatus(403); // Forbidden
+        }
+    
+        userDecode = user;
+    })
+      const email_to = userDecode.email; // Extracted email from the token
   
-    jwt.verify(token, 'your_secret_key', (err, user) => {
-      if (err) {
-        return res.sendStatus(403); // Forbidden
+      if ( !protocolId && !subjectId) {
+        return res.status(400).send("search parameters are required:protocolId, subjectId.");
       }
   
-      userDecode = user;
+      // Query the lab_report table
+      const labReports = await lab_report.findAll({  where: { 
+        protocolId,
+        email_to,
+        subjectId
+      } });
+      
+      if (labReports.length === 0) {
+        return res.status(404).send("No lab reports found.");
+      }
+  
+      // Fetch corresponding CSV reports for each lab report
+      const labReportsWithCsv = await Promise.all(labReports.map(async (labReport) => {
+        const labReportCsv = await labreport_csv.findOne({ where: { labReoprtFk: labReport.id } });
+        return {
+          labReport,
+          csvContent: labReportCsv
+        };
+      }));
+  
+      // Return the array of lab reports with their corresponding CSV data
+      return res.status(200).json(labReportsWithCsv);
+    } catch (error) {
+      console.error("Error processing request:", error);
+      return res.status(500).send("Error processing request.");
+    }
   })
-    const email_to = userDecode.email; // Extracted email from the token
-
-    if ( !protocolId && !subjectId) {
-      return res.status(400).send("search parameters are required:protocolId, subjectId.");
-    }
-
-    // Query the lab_report table
-    const labReports = await lab_report.findAll({  where: { 
-      protocolId,
-      email_to,
-      subjectId
-    } });
-    
-    if (labReports.length === 0) {
-      return res.status(404).send("No lab reports found.");
-    }
-
-    // Fetch corresponding CSV reports for each lab report
-    const labReportsWithCsv = await Promise.all(labReports.map(async (labReport) => {
-      const labReportCsv = await labreport_csv.findOne({ where: { labReoprtFk: labReport.id } });
-      return {
-        labReport,
-        csvContent: labReportCsv
-      };
-    }));
-
-    // Return the array of lab reports with their corresponding CSV data
-    return res.status(200).json(labReportsWithCsv);
-  } catch (error) {
-    console.error("Error processing request:", error);
-    return res.status(500).send("Error processing request.");
-  }
 });
 
 exports.getAllLabReportCsv = onRequest(async (req, res) => {
+ cors(req,res,async()=>{
   try {
     // Fetch all records from the labreport_csv table
     const labReportCsvs = await labreport_csv.findAll();
@@ -270,9 +279,11 @@ exports.getAllLabReportCsv = onRequest(async (req, res) => {
     console.error("Error fetching lab report CSV data:", error);
     return res.status(500).send("Error fetching lab report CSV data.");
   }
+ })
 });
 
 exports.addAdmin = onRequest(async(req,res)=>{
+cors(req,res,async()=>{
   const { user_email, password } = req.body;
 
   try {
@@ -294,8 +305,10 @@ exports.addAdmin = onRequest(async(req,res)=>{
     res.status(500).json({ message: "Internal server error" });
   }
 })
+})
 
 exports.adminLogin = onRequest(async(req,res)=>{
+cors(req,res,async()=>{
   const { user_email, password } = req.body;
 
   try {
@@ -320,12 +333,18 @@ exports.adminLogin = onRequest(async(req,res)=>{
     res.status(500).json({ message: "Internal server error" });
   }
 })
+})
 
 exports.clientInvite = onRequest(async (req, res) => {
+cors(req,res,async()=>{
   try {
     const { clientEmail } = req.body;
     if (!clientEmail) {
       return res.status(400).send('Client email is required.');
+    }
+    const existingUser = await users.findOne({ where: { user_email:clientEmail } });
+    if (existingUser) {
+      return res.status(400).json({ message: "Invitation link already sent" });
     }
 
     const token = uuidv4();
@@ -350,9 +369,11 @@ exports.clientInvite = onRequest(async (req, res) => {
     console.error('Error sending invitation email:', error.response ? error.response.body : error.message);
     return res.status(400).send({ error: error.message });
   }
+})
 });
 
 exports.updatePassword = onRequest(async (req, res) => {
+ cors(req,res,async()=>{
   try {
     const { token, password } = req.body;
 
@@ -376,9 +397,11 @@ exports.updatePassword = onRequest(async (req, res) => {
     console.error('Error updating password:', error);
     return res.status(500).send('Error updating password.');
   }
+ })
 });
 
 exports.clientLogin = onRequest(async(req,res)=>{
+ cors(req,res,async()=>{
   const { user_email, password } = req.body;
 
   try {
@@ -402,9 +425,11 @@ exports.clientLogin = onRequest(async(req,res)=>{
     console.error("Error during login:", error);
     res.status(500).json({ message: "Internal server error" });
   }
+ })
 })
 
 exports.getClientReports =onRequest (async(req,res)=>{
+ cors(req,res,async()=>{
   const authHeader = req.headers['authorization'];
   console.log("header",authHeader)
   const token = authHeader
@@ -446,10 +471,12 @@ try {
   console.error('Error fetching reports:', error);
   return res.status(500).json({ message: 'Internal server error', error });
 }
+ })
 
 })
 
 exports.getProtocolIds = onRequest(async(req,res)=>{
+cors(req,res,async()=>{
   try {
     const authHeader = req.headers['authorization'];
   console.log("header",authHeader)
@@ -484,8 +511,10 @@ return res.status(200).send(labReports)
   }
 
 })
+})
 
 exports.getSubjectIds = onRequest(async(req,res)=>{
+cors(req,res,async()=>{
   try {
     const authHeader = req.headers['authorization'];
     console.log("header",authHeader)
@@ -523,4 +552,20 @@ return res.status(200).send(labReports)
   return res.status(500).json({ message: 'Internal server error',error });
   }
 
+})
+})
+
+exports.getInvitedClients = onRequest(async(req,res)=>{
+  cors(req,res,async()=>{
+    try {
+      // Fetch all records from the users table
+      const invitedUsers = await users.findAll();
+  
+      // Return the data as a JSON response
+      return res.status(200).json(invitedUsers);
+    } catch (error) {
+      console.error("Error fetching users data:", error);
+      return res.status(500).send("Error fetching users data.");
+    }
+  })
 })
