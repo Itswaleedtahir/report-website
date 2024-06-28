@@ -1,4 +1,5 @@
 const axios = require('axios');
+const fs = require('fs');
 const { Parser } = require('json2csv');
 const { Storage } = require('@google-cloud/storage');
 const {users,pdf_email,labreport_data ,lab_report,labreport_csv,ref_range_data} = require("../models/index");
@@ -20,53 +21,60 @@ const googleCredentials = {
 
 const storage = new Storage({ projectId: 'gp-data-1-0', credentials: googleCredentials });
 
-const UplaodFile = async (Attachment,data) => {
-    const { protocolId, subjectId, investigator, timePoint } = data;
+const UplaodFile = async (pdfPath, data) => {
+  const { protocolId, subjectId, investigator, timePoint } = data;
 
-    // Sanitize the input data to ensure they can be used in a file name
-    const sanitizedProtocolId = protocolId.replace(/[^a-zA-Z0-9]/g, '_');
-    const sanitizedSubjectId = subjectId.replace(/[^a-zA-Z0-9]/g, '_');
-    const sanitizedInvestigator = investigator.replace(/[^a-zA-Z0-9]/g, '_');
-    const sanitizedTimePoint = timePoint.replace(/[^a-zA-Z0-9]/g, '_');
-    
-   // Generate the timestamp
-   const timestamp = new Date().toISOString().replace(/[-:.]/g, "").replace("T", "_").replace("Z", "");
+  // Sanitize the input data to ensure they can be used in a file name
+  const sanitizedProtocolId = protocolId.replace(/[^a-zA-Z0-9]/g, '_');
+  const sanitizedSubjectId = subjectId.replace(/[^a-zA-Z0-9]/g, '_');
+  const sanitizedInvestigator = investigator.replace(/[^a-zA-Z0-9]/g, '_');
+  const sanitizedTimePoint = timePoint.replace(/[^a-zA-Z0-9]/g, '_');
+  
+  // Generate the timestamp
+  const timestamp = new Date().toISOString().replace(/[-:.]/g, "").replace("T", "_").replace("Z", "");
 
+  // Generate the file name using the naming rule
+  const pdfname = `${sanitizedProtocolId}.${sanitizedSubjectId}.${sanitizedInvestigator}.${sanitizedTimePoint}.${timestamp}.pdf`;
+  const bucketName = 'gpdata01'; // Replace with your bucket name
+  const destination = `pdf/${pdfname}`;
 
-    // Generate the file name using the naming rule
-    const pdfname = `${sanitizedProtocolId}.${sanitizedSubjectId}.${sanitizedInvestigator}.${sanitizedTimePoint}.${timestamp}.pdf`;
-    const bucketName = 'gpdata01'; // Replace with your bucket name
-    const destination = `pdf/${pdfname}`;
-    
-    try {
+  try {
+      // Create a temporary copy with the new name in the same directory to maintain consistency
+      const dirPath = pdfPath.substring(0, pdfPath.lastIndexOf("/") + 1);
+      const tempPdfPath = `${dirPath}${pdfname}`;
+      fs.copyFileSync(pdfPath, tempPdfPath);
+
       // Create a write stream to Google Cloud Storage
       const bucket = storage.bucket(bucketName);
       const file = bucket.file(destination);
-      const writeStream = file.createWriteStream();
-    
-      // Download the file from the attachment URL and pipe it directly to the Cloud Storage write stream
-      const response = await axios({
-        url: Attachment,
-        method: 'GET',
-        responseType: 'stream',
+      const writeStream = file.createWriteStream({
+          metadata: {
+              contentType: 'application/pdf',
+          },
       });
-    
-      await new Promise((resolve, reject) => {
-        response.data.pipe(writeStream)
-          .on('error', reject)
-          .on('finish', resolve);
-      });
-    
+
+      // Stream the file from local storage to Google Cloud Storage
+      fs.createReadStream(tempPdfPath)
+          .pipe(writeStream)
+          .on('error', (err) => {
+              console.error("Error uploading file:", err);
+              throw err;
+          })
+          .on('finish', () => {
+              // Clean up: Delete the temporary file and the original file
+              fs.unlinkSync(tempPdfPath);
+              fs.unlinkSync(pdfPath); // Deleting the original file
+              const publicUrl = `https://storage.googleapis.com/${bucketName}/${destination}`;
+              console.log('File uploaded to Google Cloud Storage successfully and local file deleted.', publicUrl);
+          });
+
       // Return details after upload completes successfully
-      const publicUrl = `https://storage.googleapis.com/${bucketName}/${destination}`;
-      console.log('File uploaded to Google Cloud Storage successfully.', publicUrl);
       return { pdfname, destination };
-    
-    } catch (err) {
-      console.error("Error uploading file:", err);
+  } catch (err) {
+      console.error("Error processing file:", err);
       throw err;
-    }
-    
+  }
+
 };
 
 const PdfEmail = async (Received, pdfname, destination, To) => {
