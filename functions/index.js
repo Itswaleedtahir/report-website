@@ -33,7 +33,8 @@ exports.SendGridEmailListener = onRequest(async (req, res) => {
     const fromPattern = /From: (.*)\r\n/;
     const DatePattern = /Date: (.*)\r\n/;
     // Regex pattern for extracting attachment headers
-    const attachmentHeaderPattern = /Content-Type: application\/pdf; name="(.*)"\r\nContent-Disposition: attachment; filename="(.*)"\r\nContent-Transfer-Encoding: (.*)\r\nContent-ID: <(.*)>\r\nX-Attachment-Id: (.*)\r\n\r\n/;
+        const attachmentHeaderPattern = /Content-Type: application\/pdf;\s*name="([^"]+)"\r\nContent-Disposition: attachment;\s*filename="([^"]+)"\r\nContent-Transfer-Encoding: (\S+)\r\nContent-ID: <([^>]+)>\r\nX-Attachment-Id: (\S+)\r\n\r\n/;
+
     // Extract 'To' and 'From' addresses
     const toMatch = parts.find(part => toPattern.test(part));
     if (toMatch) {

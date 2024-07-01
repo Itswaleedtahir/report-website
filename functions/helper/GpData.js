@@ -1,5 +1,6 @@
 const axios = require('axios');
 const fs = require('fs');
+const path = require('path')
 const { Parser } = require('json2csv');
 const { Storage } = require('@google-cloud/storage');
 const {users,pdf_email,labreport_data ,lab_report,labreport_csv,ref_range_data} = require("../models/index");
@@ -22,59 +23,60 @@ const googleCredentials = {
 const storage = new Storage({ projectId: 'gp-data-1-0', credentials: googleCredentials });
 
 const UplaodFile = async (pdfPath, data) => {
-  const { protocolId, subjectId, investigator, timePoint } = data;
+  console.log("PDF Path:", pdfPath);
+  console.log('File size:', fs.statSync(pdfPath).size, 'bytes');
+  if (fs.statSync(pdfPath).size === 0) {
+    throw new Error('The source PDF file is empty.');
+  }
 
-  // Sanitize the input data to ensure they can be used in a file name
+  if (!fs.existsSync(pdfPath)) {
+    throw new Error('PDF file does not exist at the provided path.');
+  }
+
+  fs.accessSync(pdfPath, fs.constants.R_OK);
+
+  const { protocolId, subjectId, investigator, timePoint } = data;
   const sanitizedProtocolId = protocolId.replace(/[^a-zA-Z0-9]/g, '_');
   const sanitizedSubjectId = subjectId.replace(/[^a-zA-Z0-9]/g, '_');
   const sanitizedInvestigator = investigator.replace(/[^a-zA-Z0-9]/g, '_');
   const sanitizedTimePoint = timePoint.replace(/[^a-zA-Z0-9]/g, '_');
-  
-  // Generate the timestamp
   const timestamp = new Date().toISOString().replace(/[-:.]/g, "").replace("T", "_").replace("Z", "");
+  const pdfName = `${sanitizedProtocolId}.${sanitizedSubjectId}.${sanitizedInvestigator}.${sanitizedTimePoint}.${timestamp}.pdf`;
 
-  // Generate the file name using the naming rule
-  const pdfname = `${sanitizedProtocolId}.${sanitizedSubjectId}.${sanitizedInvestigator}.${sanitizedTimePoint}.${timestamp}.pdf`;
-  const bucketName = 'gpdata01'; // Replace with your bucket name
-  const destination = `pdf/${pdfname}`;
+  const bucketName = 'gpdata01';
+  const destination = `pdf/${pdfName}`;
+  const bucket = storage.bucket(bucketName);
+  const file = bucket.file(destination);
 
   try {
-      // Create a temporary copy with the new name in the same directory to maintain consistency
-      const dirPath = pdfPath.substring(0, pdfPath.lastIndexOf("/") + 1);
-      const tempPdfPath = `${dirPath}${pdfname}`;
-      fs.copyFileSync(pdfPath, tempPdfPath);
-
-      // Create a write stream to Google Cloud Storage
-      const bucket = storage.bucket(bucketName);
-      const file = bucket.file(destination);
+    await new Promise((resolve, reject) => {
+      const readStream = fs.createReadStream(pdfPath);
       const writeStream = file.createWriteStream({
-          metadata: {
-              contentType: 'application/pdf',
-          },
+        metadata: {
+          contentType: 'application/pdf',
+        }
       });
 
-      // Stream the file from local storage to Google Cloud Storage
-      fs.createReadStream(tempPdfPath)
-          .pipe(writeStream)
-          .on('error', (err) => {
-              console.error("Error uploading file:", err);
-              throw err;
-          })
-          .on('finish', () => {
-              // Clean up: Delete the temporary file and the original file
-              fs.unlinkSync(tempPdfPath);
-              fs.unlinkSync(pdfPath); // Deleting the original file
-              const publicUrl = `https://storage.googleapis.com/${bucketName}/${destination}`;
-              console.log('File uploaded to Google Cloud Storage successfully and local file deleted.', publicUrl);
-          });
+      readStream.pipe(writeStream)
+        .on('error', reject)
+        .on('finish', resolve);
+    });
 
-      // Return details after upload completes successfully
-      return { pdfname, destination };
-  } catch (err) {
-      console.error("Error processing file:", err);
-      throw err;
+    console.log('File uploaded to Google Cloud Storage:', `https://storage.googleapis.com/${bucketName}/${destination}`);
+    
+    // Delete the file after successful upload
+    fs.unlink(pdfPath, (err) => {
+      if (err) {
+        console.error('Failed to delete the original PDF file:', err);
+        throw err;
+      }
+      console.log('Original PDF file deleted successfully');
+    });
+
+    return { pdfName, destination };
+  } catch (error) {
+    throw new Error('Failed to upload PDF: ' + error.message);
   }
-
 };
 
 const PdfEmail = async (Received, pdfname, destination, To) => {
