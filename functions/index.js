@@ -6,7 +6,7 @@ const { v4: uuidv4 } = require('uuid');
 const cors = require("cors")({ origin: true });
 const sgMail = require('@sendgrid/mail');
 const { Op, Sequelize } = require("sequelize");
-const { UplaodFile, PdfEmail, labReport, labReoprtData, MakeCsv } = require("./helper/GpData");
+const { UplaodFile, PdfEmail, labReport, labReoprtData, MakeCsv ,pdfProcessor} = require("./helper/GpData");
 const { users, admin, pdf_email, labreport_data, lab_report, labreport_csv, ref_range_data } = require("./models/index");
 const fs = require('fs');
 const path = require('path');
@@ -93,118 +93,46 @@ exports.SendGridEmailListener = onRequest(async (req, res) => {
      console.log("Attachments:", attachments);
      console.log("Date,",DateReceivedEmail)
      console.log("path",pdfPath)
+
+     const apiUrl = 'https://d5a9-119-155-140-10.ngrok-free.app/process-pdf/'; // Your API endpoint
+  
+   const {data} =await pdfProcessor(pdfPath, apiUrl)
+    // const extractedDataFormatted =  JSON.parse(data)
+    console.log("foramt",data)
       // Extract and map data from the parsed JSON response
       const extractData = (data) => {
+        if (!Array.isArray(data)) {
+          console.error('Invalid input: data is not an array');
+          return;  // or throw an error, or handle this case as needed
+        }
+      
         const tests = data.filter(item => item.type === "Tests").map(test => {
+          // Assuming that the properties are nested arrays, flatten them first
+          const properties = test.properties.flat(); // Flatten the nested arrays
+      
+          const labTest = properties.find(prop => prop.type === "Test");
+          const result = properties.find(prop => prop.type === "Result");
+          const refRange = properties.find(prop => prop.type === "Ref_Range");
+      
           return {
             lab_provider: "Medpace",
-            lab_name: test.properties.find(prop => prop.type === "Test").mentionText,
-            value: test.properties.find(prop => prop.type === "Result").mentionText,
-            refValue: test.properties.find(prop => prop.type === "Ref_Range").mentionText
+            lab_name: labTest ? labTest.mentionText : 'Unknown',
+            value: result ? result.mentionText : 'Pending',
+            refValue: refRange ? refRange.mentionText : 'N/A' // Handle missing reference range gracefully
           };
         });
-
+      
         return {
-          protocolId: data.find(item => item.type === "protocolId").mentionText,
-          investigator: data.find(item => item.type === "investigator").mentionText,
-          subjectId: data.find(item => item.type === "subjectId").mentionText,
-          dateOfCollection: data.find(item => item.type === "dateOfCollection").mentionText,
-          timePoint: data.find(item => item.type === "timePoint").mentionText,
+          protocolId: data.find(item => item.type === "protocolId")?.mentionText || 'Unknown',
+          investigator: data.find(item => item.type === "investigator")?.mentionText || 'Unknown',
+          subjectId: data.find(item => item.type === "subjectId")?.mentionText || 'Unknown',
+          dateOfCollection: data.find(item => item.type === "dateOfCollection")?.mentionText || 'Unknown',
+          timePoint: data.find(item => item.type === "timePoint")?.mentionText || 'Unknown',
           tests: tests
         };
       };
-
-      const testdata = [
-        {
-          "type": "dateOfCollection",
-          "mentionText": "20-Dec-2023"
-        },
-        {
-          "type": "Tests",
-          "properties": [
-            {
-              "type": "Ref_Range",
-              "mentionText": "63.0-552.0"
-            },
-            {
-              "type": "Result",
-              "mentionText": "346.4"
-            },
-            {
-              "type": "Test",
-              "mentionText": "Tissue Inhibitor of\nMetalloproteinase 1"
-            }
-          ]
-        },
-        {
-          "type": "Tests",
-          "properties": [
-            {
-              "type": "Ref_Range",
-              "mentionText": "<120"
-            },
-            {
-              "type": "Result",
-              "mentionText": "511.19"
-            },
-            {
-              "type": "Test",
-              "mentionText": "Hyaluronic Acid"
-            }
-          ]
-        },
-        {
-          "type": "Tests",
-          "properties": [
-            {
-              "type": "Ref_Range",
-              "mentionText": "3.50 -9.50"
-            },
-            {
-              "type": "Result",
-              "mentionText": "14.19"
-            },
-            {
-              "type": "Test",
-              "mentionText": "Amino-terminal propeptide of type\nIII procollagen"
-            }
-          ]
-        },
-        {
-          "type": "Tests",
-          "properties": [
-            {
-              "type": "Ref_Range",
-              "mentionText": "N/A - See"
-            },
-            {
-              "type": "Result",
-              "mentionText": "11.88"
-            },
-            {
-              "type": "Test",
-              "mentionText": "Enhanced Liver Fibrosis Test (ELF)"
-            }
-          ]
-        },
-        {
-          "type": "timePoint",
-          "mentionText": "Week 40"
-        },
-        {
-          "type": "investigator",
-          "mentionText": "Dr. Anita Kohli"
-        },
-        {
-          "type": "protocolId",
-          "mentionText": "MGL-3196-21"
-        },
-        {
-          "type": "subjectId",
-          "mentionText": "0128-9014"
-        }
-      ]
-      const extractedData = extractData(testdata);
+      
+      const extractedData = extractData(data);
 
       // Call function to upload file and get necessary data
       const { pdfname, destination } = await UplaodFile(pdfPath, extractedData);

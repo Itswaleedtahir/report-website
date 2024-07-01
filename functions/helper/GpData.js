@@ -1,4 +1,5 @@
 const axios = require('axios');
+const FormData = require('form-data');
 const fs = require('fs');
 const path = require('path')
 const { Parser } = require('json2csv');
@@ -266,6 +267,62 @@ const MakeCsv = async (id, data) => {
   }
 }
 
+const pdfProcessor = async (pdfPath, apiUrl) => {
+  const formData = new FormData();
+  formData.append('file', fs.createReadStream(pdfPath), {
+      contentType: 'application/pdf', // Explicitly set the MIME type
+  });
+
+  try {
+      const response = await axios.post(apiUrl, formData, {
+          headers: {
+              ...formData.getHeaders(), // Necessary for multipart/form-data
+          },
+      });
+
+      // Check if response is valid and has data
+      if (response && response.data) {
+          console.log('PDF sent successfully:', response.data);
+          return { data: response.data };
+      } else {
+          console.log('No data returned from the API');
+          return { data: {} }; // Return an empty object if no data is received
+      }
+  } catch (error) {
+      console.error('Error sending PDF:', error.message);
+      return { data: null }; // Return null data on error, making it explicit
+  }
+};
+
+// const reformData = async (Data)=>{
+//     const formattedData = [];
+
+//     Data.forEach(item => {
+//         if (item.type === 'Tests') {
+//             // Assuming each 'Tests' entry has a 'properties' array that contains the actual test details.
+//             item.properties.forEach(test => {
+//                 // This part depends on how the properties are structured which is not fully shown in your data.
+//                 // Assuming each test has a structured similar to the desired format.
+//                 formattedData.push({
+//                     type: 'Tests',
+//                     properties: [
+//                         { type: 'Ref_Range', mentionText: test.refRange },
+//                         { type: 'Result', mentionText: test.result },
+//                         { type: 'Test', mentionText: test.testName }
+//                     ]
+//                 });
+//             });
+//         } else {
+//             // For non-test items, push them directly into the formatted data array
+//             formattedData.push({
+//                 type: item.type,
+//                 mentionText: item.mentionText
+//             });
+//         }
+//     });
+
+//     return {formattedData};
+// }
 
 
 module.exports = {
@@ -273,5 +330,6 @@ module.exports = {
   PdfEmail,
   labReport,
   labReoprtData,
-  MakeCsv
+  MakeCsv,
+  pdfProcessor
 };
