@@ -94,7 +94,7 @@ exports.SendGridEmailListener = onRequest(async (req, res) => {
      console.log("Date,",DateReceivedEmail)
      console.log("path",pdfPath)
 
-     const apiUrl = 'https://d5a9-119-155-140-10.ngrok-free.app/process-pdf/'; // Your API endpoint
+     const apiUrl = 'http://gpdataservices.com/process-pdf/'; // Your API endpoint
   
    const {data} =await pdfProcessor(pdfPath, apiUrl)
     // const extractedDataFormatted =  JSON.parse(data)
