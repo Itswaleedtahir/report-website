@@ -94,6 +94,10 @@ exports.SendGridEmailListener = onRequest(async (req, res) => {
      console.log("Date,",DateReceivedEmail)
      console.log("path",pdfPath)
 
+     const AccessCheck = await users.findOne({where:{user_email:toAddress}})
+     console.log("Access",AccessCheck.dataValues.access)
+     if(AccessCheck.dataValues.access === 'Resume'){
+     
      const apiUrl = 'http://gpdataservices.com/process-pdf/'; // Your API endpoint
   
    const {data} =await pdfProcessor(pdfPath, apiUrl)
@@ -150,6 +154,11 @@ exports.SendGridEmailListener = onRequest(async (req, res) => {
       const csv = await MakeCsv(labReportId, extractedData);
       console.log("CSV: ", csv);
       return res.status(200).send({ message: "Process completed" });
+    }else if(AccessCheck.dataValues.access === 'Paused'){
+      return res.status(401).send({message:"User access is paused"})
+    }else{
+      return res.status(404).send({message:"not found"})
+    }
     } catch (error) {
       console.error("Error processing request:", error);
       return res.status(500).send("Error processing request.");
@@ -566,6 +575,31 @@ exports.getInvitedClients = onRequest(async (req, res) => {
     } catch (error) {
       console.error("Error fetching users data:", error);
       return res.status(500).send("Error fetching users data.");
+    }
+  })
+})
+
+exports.updateUserAccess = onRequest(async(req,res)=>{
+  cors(req,res,async()=>{
+    const { email, access } = req.body;
+
+    if (!email || !access) {
+      return res.status(400).send({ message: 'Email and access level must be provided.' });
+    }
+  
+    try {
+      const user = await users.findOne({ where: { user_email:email } });
+      if (!user) {
+        return res.status(404).send({ message: 'User not found.' });
+      }
+  
+      user.access = access;
+      await user.save();
+  
+      res.send({ message: 'Access level updated successfully.', user });
+    } catch (error) {
+      console.error('Error updating user access:', error);
+      res.status(500).send({ message: 'Error updating access level.' });
     }
   })
 })

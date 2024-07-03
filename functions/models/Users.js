@@ -21,6 +21,11 @@ module.exports = (sequelize, DataTypes) => {
       token:{
         type:DataTypes.STRING,
         allowNull:true
+      },
+      access:{
+        type:DataTypes.STRING,
+        allowNull:true,
+        defaultValue: 'Resume'
       }
     },
     {
