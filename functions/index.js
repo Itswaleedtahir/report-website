@@ -291,6 +291,63 @@ exports.getAllLabReportCsv = onRequest(async (req, res) => {
   })
 });
 
+exports.getLabReportNamesByEmail = onRequest(async (req, res) => {
+  cors(req, res, async () => {
+    const authHeader = req.headers['authorization'];
+    console.log("header", authHeader)
+    const token = authHeader
+    let userDecode;
+    if (!token) {
+      return res.sendStatus(401); // Unauthorized
+    }
+
+    jwt.verify(token, 'your_secret_key', (err, user) => {
+      if (err) {
+        return res.sendStatus(403); // Forbidden
+      }
+
+      userDecode = user;
+    })
+    const email_to = userDecode.email; // Extracted email from the token
+    if (!email_to) {
+      return res.status(400).send("Email parameter is required.");
+    }
+
+    try {
+      // Fetch lab reports by email
+      const labReports = await lab_report.findAll({
+        where: { email_to: email_to },
+        attributes: ['id'] // Only fetch the 'id' attribute
+      });
+
+      if (labReports.length === 0) {
+        return res.status(404).send("No lab reports found for the given email.");
+      }
+
+      // Extract IDs from the lab reports
+      const labReportIds = labReports.map(report => report.id);
+
+      // Fetch unique lab names from labreport_data using the extracted IDs
+      const labReportData = await labreport_data.findAll({
+        where: { labReoprtFk: labReportIds },
+        attributes: ['lab_name'],
+        group: ['lab_name'] // Group by 'lab_name' to get unique names
+      });
+
+      // Extract lab names from the results
+      const labNames = labReportData.map(data => data.lab_name);
+
+      return res.json({
+        labNames
+      });
+    } catch (error) {
+      console.error('Error:', error);
+      return res.status(500).send("Internal server error");
+    }
+  });
+});
+
+
 exports.addAdmin = onRequest(async (req, res) => {
   cors(req, res, async () => {
     const { user_email, password } = req.body;
@@ -441,7 +498,7 @@ exports.getClientReports = onRequest(async (req, res) => {
   cors(req, res, async () => {
     const authHeader = req.headers['authorization'];
     console.log("header", authHeader)
-    const token = authHeader
+    const token = authHeader;
     let userDecode;
     if (!token) {
       return res.sendStatus(401); // Unauthorized
@@ -453,36 +510,58 @@ exports.getClientReports = onRequest(async (req, res) => {
       }
 
       userDecode = user;
-    })
+    });
 
-    const email_to = userDecode.email; // Extracted email from the token
+    const email_to = userDecode.email;
+    const page = parseInt(req.query.page) || 1;
+    const pageSize = parseInt(req.query.pageSize) || 10;
 
     try {
-      // Query the lab_report table
       const labReports = await lab_report.findAll({ where: { email_to } });
 
       if (labReports.length === 0) {
         return res.status(404).send("No lab reports found.");
       }
 
-      // Fetch corresponding CSV reports for each lab report
-      const labReportsWithCsv = await Promise.all(labReports.map(async (labReport) => {
+      let allCombinedLabReports = [];
+      for (let labReport of labReports) {
         const labReportCsv = await labreport_csv.findOne({ where: { labReoprtFk: labReport.id } });
-        return {
-          labReport,
-          csvContent: labReportCsv
-        };
-      }));
 
+        // Fetch all related labReportDatas for the labReport
+        const labReportDatas = await labreport_data.findAll({
+          where: { labReoprtFk: labReport.id }
+        });
 
-      return res.json(labReportsWithCsv);
+        // Combine each labReportData with the labReport and CSV content
+        labReportDatas.forEach(labReportData => {
+          allCombinedLabReports.push({
+            ...labReport.dataValues,
+            ...labReportData.dataValues,
+            csvContent: labReportCsv
+          });
+        });
+      }
+
+      // Apply pagination after combining data
+      const start = (page - 1) * pageSize;
+      const paginatedCombinedLabReports = allCombinedLabReports.slice(start, start + pageSize);
+
+      return res.json({
+        data: paginatedCombinedLabReports,
+        pagination: {
+          totalItems: allCombinedLabReports.length,
+          totalPages: Math.ceil(allCombinedLabReports.length / pageSize),
+          currentPage: page,
+          pageSize
+        }
+      });
     } catch (error) {
       console.error('Error fetching reports:', error);
       return res.status(500).json({ message: 'Internal server error', error });
     }
-  })
+  });
+});
 
-})
 
 exports.getProtocolIds = onRequest(async (req, res) => {
   cors(req, res, async () => {
