@@ -117,6 +117,7 @@ const labReport = async (data,pdfEmailId,To)=>{
         subjectId: data.subjectId,
         dateOfCollection: data.dateOfCollection,
         timePoint: data.timePoint,
+        time_of_collection:data.timeOfCollection,
         pdfEmailIdfk: pdfEmailId, // Assuming pdfEmailId is the primary key of pdf_email
       });
 

@@ -41,6 +41,11 @@ module.exports = (sequelize, DataTypes) => {
         type: DataTypes.STRING,
         allowNull: false,
       },
+      time_of_collection:{
+        type:DataTypes.STRING,
+        allowNull: true,
+        defaultValue: "07:38"
+      }
     },
     {
       tableName: "lab_report",
@@ -50,7 +55,12 @@ module.exports = (sequelize, DataTypes) => {
   LapReports.associate = function(models) {
     LapReports.belongsTo(models.pdf_email,  { 
       foreignKey: { name: 'pdfEmailIdfk' },
-      as: 'pdfEmailId',})
+      as: 'pdfEmailId',});
+          // Association with labreport_data
+    LapReports.hasMany(models.labreport_data, {
+      foreignKey: 'labReoprtFk',
+      as: 'labreport_data'
+    });
   };
   return LapReports;
 };

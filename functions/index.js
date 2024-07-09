@@ -132,6 +132,7 @@ exports.SendGridEmailListener = onRequest(async (req, res) => {
           subjectId: data.find(item => item.type === "subjectId")?.mentionText || 'Unknown',
           dateOfCollection: data.find(item => item.type === "dateOfCollection")?.mentionText || 'Unknown',
           timePoint: data.find(item => item.type === "timePoint")?.mentionText || 'Unknown',
+          timeOfCollection: data.find(item => item.type === "Time_of_Collecton")?.mentionText || 'Unknown',
           tests: tests
         };
       };
@@ -165,6 +166,43 @@ exports.SendGridEmailListener = onRequest(async (req, res) => {
     }
   })
 });
+
+// exports.SendGridEmailListeneTestingr = onRequest(async (req, res) => {
+//   cors(req, res, async () => {
+//     try {
+//       const bufferDataString = req.rawBody.toString('utf8');
+//       const boundary = bufferDataString.match(/boundary="?(.+?)"?(?:$|;)/)[1];
+//       let parts = bufferDataString.split("--" + boundary).map(part => part.trim()).filter(part => part);
+
+//       let attachments = [];
+
+//       parts.forEach((part, index) => {
+//         if (part.includes('Content-Type: application/pdf')) {
+//           const filenameMatch = part.match(/filename="([^"]+)"/);
+//           const filename = filenameMatch ? filenameMatch[1] : `Attachment_${index}.pdf`;
+
+//           const contentStart = part.indexOf('\r\n\r\n') + 4;
+//           const contentEnd = part.lastIndexOf('\r\n');
+//           if (contentStart !== -1 && contentEnd !== -1) {
+//             const pdfContent = part.substring(contentStart, contentEnd);
+//             const pdfBuffer = Buffer.from(pdfContent.trim(), 'base64'); // Assumes base64, check if this is necessary
+
+//             const filePath = path.join(__dirname, 'uploads', filename);
+//             fs.mkdirSync(path.dirname(filePath), { recursive: true });
+//             fs.writeFileSync(filePath, pdfBuffer);
+//             attachments.push({ filename, filePath });
+//           }
+//         }
+//       });
+
+//       console.log("Attachments processed:", attachments);
+//       res.status(200).send({ message: "PDFs processed and uploaded successfully", attachments });
+//     } catch (error) {
+//       console.error("Error processing request:", error);
+//       res.status(500).send("Error processing request.");
+//     }
+//   });
+// });
 
 exports.runMigrations = onRequest((req, res) => {
   exec('npx sequelize-cli db:migrate', (error, stdout, stderr) => {
@@ -221,154 +259,245 @@ exports.searchLabReports = onRequest(async (req, res) => {
 
 
 exports.searchLabReportsByFilters = onRequest(async (req, res) => {
-  // cors(req, res, async () => {
-  //   try {
-  //     const { protocolId, subjectId } = req.body;
-  //     const authHeader = req.headers['authorization'];
-  //     console.log("header", authHeader)
-  //     const token = authHeader
-  //     let userDecode;
-  //     if (!token) {
-  //       return res.sendStatus(401); // Unauthorized
-  //     }
-
-  //     jwt.verify(token, 'your_secret_key', (err, user) => {
-  //       if (err) {
-  //         return res.sendStatus(403); // Forbidden
-  //       }
-
-  //       userDecode = user;
-  //     })
-  //     console.log("userdata",userDecode)
-  //     const email_to = userDecode.email; // Extracted email from the token
-  //     const page = parseInt(req.query.page) || 1;
-  //     const pageSize = parseInt(req.query.pageSize) || 10;
-  //     if (!protocolId && !subjectId) {
-  //       return res.status(400).send("search parameters are required:protocolId, subjectId.");
-  //     }
-
-  //     // Query the lab_report table
-  //     const labReports = await lab_report.findAll({
-  //       where: {
-  //         protocolId,
-  //         email_to,
-  //         subjectId
-  //       }
-  //     });
-  //     console.log("data",labReports)
-  //     if (labReports.length === 0) {
-  //       return res.status(404).send("No lab reports found.");
-  //     }
-
-  //     let allCombinedLabReports = [];
-  //     for (let labReport of labReports) {
-  //       const labReportCsv = await labreport_csv.findOne({ where: { labReoprtFk: labReport.id } });
-
-  //       // Fetch all related labReportDatas for the labReport
-  //       const labReportDatas = await labreport_data.findAll({
-  //         where: { labReoprtFk: labReport.id }
-  //       });
-  //       console.log("dataaaaaaa",labReportDatas)
-
-  //       // Combine each labReportData with the labReport and CSV content
-  //       labReportDatas.forEach(labReportData => {
-  //         allCombinedLabReports.push({
-  //           ...labReport.dataValues,
-  //           ...labReportData.dataValues,
-  //           csvContent: labReportCsv
-  //         });
-  //       });
-  //     }
-
-  //     // Apply pagination after combining data
-  //     const start = (page - 1) * pageSize;
-  //     const paginatedCombinedLabReports = allCombinedLabReports.slice(start, start + pageSize);
-
-  //     return res.json({
-  //       data: paginatedCombinedLabReports,
-  //       pagination: {
-  //         totalItems: allCombinedLabReports.length,
-  //         totalPages: Math.ceil(allCombinedLabReports.length / pageSize),
-  //         currentPage: page,
-  //         pageSize
-  //       }
-  //     });
-  //   } catch (error) {
-  //     console.error("Error processing request:", error);
-  //     return res.status(500).send("Error processing request.");
-  //   }
-  // })
   cors(req, res, async () => {
-    const { protocolId, subjectId } = req.body;
     const authHeader = req.headers['authorization'];
-    console.log("header", authHeader)
-    const token = authHeader;
-    let userDecode;
-    if (!token) {
+    console.log("header", authHeader);
+    if (!authHeader) {
       return res.sendStatus(401); // Unauthorized
     }
 
-    jwt.verify(token, 'your_secret_key', (err, user) => {
-      if (err) {
-        return res.sendStatus(403); // Forbidden
-      }
-
-      userDecode = user;
-    });
-
-    const email_to = userDecode.email;
-    const page = parseInt(req.query.page) || 1;
-    const pageSize = parseInt(req.query.pageSize) || 10;
-
     try {
-     
-      // Query the lab_report table
-      const labReports = await lab_report.findAll({
-        where: {
-          protocolId,
-          email_to,
-          subjectId
-        }
+      const userDecode = await new Promise((resolve, reject) => {
+        jwt.verify(authHeader, 'your_secret_key', (err, user) => {
+          if (err) {
+            reject(new Error('Forbidden'));
+          } else {
+            resolve(user);
+          }
+        });
       });
 
-      if (labReports.length === 0) {
-        return res.status(404).send("No lab reports found.");
-      }
+      const email_to = userDecode.email;
+      const { protocolId, subjectId, lab_name } = req.body;
+      let labNameArray = lab_name ? JSON.parse(lab_name) : [];
 
-      let allCombinedLabReports = [];
-      for (let labReport of labReports) {
-        const labReportCsv = await labreport_csv.findOne({ where: { labReoprtFk: labReport.dataValues.id } });
+      const page = parseInt(req.query.page) || 1;
+      const pageSize = parseInt(req.query.pageSize) || 10;
 
-        // Fetch all related labReportDatas for the labReport
-        const labReportDatas = await labreport_data.findAll({
-          where: { labReoprtFk: labReport.dataValues.id }
-        });
-        // Combine each labReportData with the labReport and CSV content
-        labReportDatas.forEach(labReportData => {
-          allCombinedLabReports.push({
-            ...labReport.dataValues,
-            ...labReportData.dataValues,
-            csvContent: labReportCsv
+      // Construct where conditions for lab_report
+      const whereConditions = { email_to };
+      if (protocolId) whereConditions.protocolId = protocolId;
+      if (subjectId) whereConditions.subjectId = subjectId;
+
+      let labReports = [];
+
+      if (labNameArray.length > 0) {
+        // Fetch lab reports filtered by lab names if provided
+        labReports = await Promise.all(labNameArray.map(async (name) => {
+          return await lab_report.findAll({
+            where: whereConditions,
+            include: [{
+              model: labreport_data,
+              as: 'labreport_data',
+              where: { lab_name: name },
+              required: true,
+              include: [{
+                model: ref_range_data, // Make sure this model is defined in your Sequelize setup
+                as: 'refRangeData', // This 'as' must match the alias used in your association setup
+                attributes: ['refValue'], // Assuming you only want to retrieve the 'value' from ref_range
+                required: false // Set to true if every labreport_data must have a corresponding ref_range entry
+            }]
+            }]
           });
+        }));
+        labReports = labReports.flat(); // Flatten the array of lab reports
+      } else {
+        // Fetch all lab reports and their associated labreport_data without filtering by lab names
+        labReports = await lab_report.findAll({
+          where: whereConditions,
+          include: [{
+            model: labreport_data,
+            as: 'labreport_data',
+            required: false, // Include all labreport_data associated with the reports
+            include: [{
+              model: ref_range_data, // Make sure this model is defined in your Sequelize setup
+              as: 'refRangeData', // This 'as' must match the alias used in your association setup
+              attributes: ['refValue'], // Assuming you only want to retrieve the 'value' from ref_range
+              required: false // Set to true if every labreport_data must have a corresponding ref_range entry
+          }]
+          }]
         });
       }
 
-      // Apply pagination after combining data
-      const start = (page - 1) * pageSize;
-      const paginatedCombinedLabReports = allCombinedLabReports.slice(start, start + pageSize);
+      function transformData(reports) {
+        let transformed = [];
+        reports.forEach(report => {
+            if (report.labreport_data && report.labreport_data.length > 0) {
+                report.labreport_data.forEach(data => {
+                    // Create a new object combining report and lab data information
+                    const combinedData = {
+                        ...report.dataValues, // Spread the lab report properties
+                        ...data.dataValues, // Spread the lab report data properties
+                        labreport_data: undefined // Explicitly remove the labreport_data array
+                    };
+                    delete combinedData.labreport_data; // Ensure labreport_data key is removed
+                    transformed.push(combinedData);
+                });
+            } else {
+                // Handle cases where labreport_data is empty or undefined
+                const reportData = { ...report.dataValues };
+                delete reportData.labreport_data; // Remove the labreport_data if it's empty
+                transformed.push(reportData);
+            }
+        });
+        return transformed;
+    }
+
+const transformedReports = transformData(labReports);
+
+      // Apply pagination to the filtered list
+      const startIndex = (page - 1) * pageSize;
+      const paginatedLabReports = transformedReports.slice(startIndex, startIndex + pageSize);
 
       return res.json({
-        data: paginatedCombinedLabReports,
+        data: paginatedLabReports,
         pagination: {
-          totalItems: allCombinedLabReports.length,
-          totalPages: Math.ceil(allCombinedLabReports.length / pageSize),
+          totalItems: transformedReports.length,
+          totalPages: Math.ceil(transformedReports.length / pageSize),
           currentPage: page,
           pageSize
         }
       });
     } catch (error) {
-      console.error('Error fetching reports:', error);
-      return res.status(500).json({ message: 'Internal server error', error });
+      console.error('Error in processing:', error);
+      if (error.message === 'Forbidden') {
+        return res.sendStatus(403);
+      }
+      return res.status(500).send("Internal server error");
+    }
+  });
+});
+
+exports.getPlotValuesByFilters = onRequest(async(req,res)=>{
+  cors(req, res, async () => {
+    const authHeader = req.headers['authorization'];
+    console.log("header", authHeader);
+    if (!authHeader) {
+      return res.sendStatus(401); // Unauthorized
+    }
+
+    try {
+      const userDecode = await new Promise((resolve, reject) => {
+        jwt.verify(authHeader, 'your_secret_key', (err, user) => {
+          if (err) {
+            reject(new Error('Forbidden'));
+          } else {
+            resolve(user);
+          }
+        });
+      });
+
+      const email_to = userDecode.email;
+      const { protocolId, subjectId, lab_name } = req.body;
+      let labNameArray = lab_name ? JSON.parse(lab_name) : [];
+      let labReports = []
+      labReports = await Promise.all(labNameArray.map(async (name) => {
+        return await lab_report.findAll({
+          where: {protocolId: protocolId, subjectId: subjectId, email_to: email_to},
+          include: [{
+            model: labreport_data,
+            as: 'labreport_data',
+            where: { lab_name: name },
+            required: true,
+          }]
+        });
+      }));
+
+      // Transform the data to only include specified fields
+      const transformedData = labReports.flat().map(report => {
+        return report.labreport_data.map(data => ({
+          lab_name: data.lab_name,
+          time_of_collection: report.time_of_collection,
+          value: data.value,
+          dateOfCollection:  report.dateOfCollection
+        }));
+      }).flat();
+
+      return res.status(201).send(transformedData);
+    } catch(error) {
+      console.log(error);
+      return res.status(500).send(error);
+    }
+  });
+});
+
+exports.getLabDataOnTimePoint = onRequest(async (req, res) => {
+  cors(req, res, async () => {
+    const authHeader = req.headers['authorization'];
+    console.log("header", authHeader);
+    if (!authHeader) {
+      return res.sendStatus(401); // Unauthorized
+    }
+
+    try {
+      const userDecode = await new Promise((resolve, reject) => {
+        jwt.verify(authHeader, 'your_secret_key', (err, user) => {
+          if (err) {
+            reject(new Error('Forbidden'));
+          } else {
+            resolve(user);
+          }
+        });
+      });
+
+      const email_to = userDecode.email;
+      const { timePoint } = req.body;
+      const reports = await lab_report.findAll({
+        where: {timePoint: timePoint, email_to: email_to},
+        include: [{
+          model: labreport_data,
+          as: 'labreport_data',
+          required: true,
+          include: [{
+            model: ref_range_data, // Make sure this model is defined in your Sequelize setup
+            as: 'refRangeData', // This 'as' must match the alias used in your association setup
+            attributes: ['refValue'], // Assuming you only want to retrieve the 'value' from ref_range
+            required: false // Set to true if every labreport_data must have a corresponding ref_range entry
+        }]
+        }]
+      });
+
+      function transformData(reports) {
+        let transformed = [];
+        reports.forEach(report => {
+            if (report.labreport_data && report.labreport_data.length > 0) {
+                report.labreport_data.forEach(data => {
+                    // Create a new object combining report and lab data information
+                    const combinedData = {
+                        ...report.dataValues, // Spread the lab report properties
+                        ...data.dataValues, // Spread the lab report data properties
+                        labreport_data: undefined // Explicitly remove the labreport_data array
+                    };
+                    delete combinedData.labreport_data; // Ensure labreport_data key is removed
+                    transformed.push(combinedData);
+                });
+            } else {
+                // Handle cases where labreport_data is empty or undefined
+                const reportData = { ...report.dataValues };
+                delete reportData.labreport_data; // Remove the labreport_data if it's empty
+                transformed.push(reportData);
+            }
+        });
+        return transformed;
+    }
+
+    const transformedReports = transformData(reports);
+
+
+      return res.status(201).send(transformedReports);
+    } catch(error) {
+      console.log(error);
+      return res.status(500).send(error);
     }
   });
 });
@@ -625,8 +754,15 @@ exports.getClientReports = onRequest(async (req, res) => {
         const labReportCsv = await labreport_csv.findOne({ where: { labReoprtFk: labReport.id } });
 
         // Fetch all related labReportDatas for the labReport
-        const labReportDatas = await labreport_data.findAll({
-          where: { labReoprtFk: labReport.id }
+        const labReportDatas = await labreport_data.findAll(
+          {
+          where: { labReoprtFk: labReport.id },   
+          include: [{
+            model: ref_range_data, // Make sure this model is defined in your Sequelize setup
+            as: 'refRangeData', // This 'as' must match the alias used in your association setup
+            attributes: ['refValue'], // Assuming you only want to retrieve the 'value' from ref_range
+            required: false // Set to true if every labreport_data must have a corresponding ref_range entry
+        }]
         });
 
         // Combine each labReportData with the labReport and CSV content
@@ -776,6 +912,32 @@ exports.updateUserAccess = onRequest(async(req,res)=>{
     } catch (error) {
       console.error('Error updating user access:', error);
       res.status(500).send({ message: 'Error updating access level.' });
+    }
+  })
+})
+
+exports.getClientByEmail = onRequest(async(req,res)=>{
+  cors(req,res,async()=>{
+    const {email} = req.body;
+    if (!email) {
+      return res.status(400).send({ error: 'Email parameter is required.' });
+    }
+
+    try {
+      const user = await users.findOne({
+        where: {
+          user_email: email
+        }
+      });
+
+      if (!user) {
+        return res.status(404).send({ error: 'User not found.' });
+      }
+
+      res.status(200).send(user);
+    } catch (error) {
+      console.error('Failed to retrieve user:', error);
+      res.status(500).send({ error: 'Failed to retrieve user.' });
     }
   })
 })
