@@ -296,6 +296,7 @@ exports.searchLabReportsByFilters = onRequest(async (req, res) => {
         labReports = await Promise.all(labNameArray.map(async (name) => {
           return await lab_report.findAll({
             where: whereConditions,
+            order: [['createdAt', 'DESC']],
             include: [{
               model: labreport_data,
               as: 'labreport_data',
@@ -452,8 +453,13 @@ exports.getLabDataOnTimePoint = onRequest(async (req, res) => {
 
       const email_to = userDecode.email;
       const { timePoint } = req.body;
+      
+      const page = parseInt(req.query.page) || 1;
+      const pageSize = parseInt(req.query.pageSize) || 10;
+
       const reports = await lab_report.findAll({
         where: {timePoint: timePoint, email_to: email_to},
+        order: [['createdAt', 'DESC']],
         include: [{
           model: labreport_data,
           as: 'labreport_data',
@@ -465,6 +471,7 @@ exports.getLabDataOnTimePoint = onRequest(async (req, res) => {
             required: false // Set to true if every labreport_data must have a corresponding ref_range entry
         }]
         }]
+        
       });
 
       function transformData(reports) {
@@ -493,8 +500,19 @@ exports.getLabDataOnTimePoint = onRequest(async (req, res) => {
 
     const transformedReports = transformData(reports);
 
+       // Apply pagination to the filtered list
+       const startIndex = (page - 1) * pageSize;
+       const paginatedLabReports = transformedReports.slice(startIndex, startIndex + pageSize);
 
-      return res.status(201).send(transformedReports);
+       return res.json({
+        data: paginatedLabReports,
+        pagination: {
+          totalItems: transformedReports.length,
+          totalPages: Math.ceil(transformedReports.length / pageSize),
+          currentPage: page,
+          pageSize
+        }
+      });
     } catch(error) {
       console.log(error);
       return res.status(500).send(error);
@@ -743,7 +761,7 @@ exports.getClientReports = onRequest(async (req, res) => {
     const pageSize = parseInt(req.query.pageSize) || 10;
 
     try {
-      const labReports = await lab_report.findAll({ where: { email_to } });
+      const labReports = await lab_report.findAll({ where: { email_to },order: [['createdAt', 'DESC']] });
 
       if (labReports.length === 0) {
         return res.status(404).send("No lab reports found.");
@@ -751,7 +769,7 @@ exports.getClientReports = onRequest(async (req, res) => {
 
       let allCombinedLabReports = [];
       for (let labReport of labReports) {
-        const labReportCsv = await labreport_csv.findOne({ where: { labReoprtFk: labReport.id } });
+        const labReportCsv = await labreport_csv.findOne({ where: { labReoprtFk: labReport.id },order: [['createdAt', 'DESC']] });
 
         // Fetch all related labReportDatas for the labReport
         const labReportDatas = await labreport_data.findAll(
@@ -762,7 +780,7 @@ exports.getClientReports = onRequest(async (req, res) => {
             as: 'refRangeData', // This 'as' must match the alias used in your association setup
             attributes: ['refValue'], // Assuming you only want to retrieve the 'value' from ref_range
             required: false // Set to true if every labreport_data must have a corresponding ref_range entry
-        }]
+        }],order: [['createdAt', 'DESC']]
         });
 
         // Combine each labReportData with the labReport and CSV content
