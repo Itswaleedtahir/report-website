@@ -278,7 +278,7 @@ exports.searchLabReportsByFilters = onRequest(async (req, res) => {
       });
 
       const email_to = userDecode.email;
-      const { protocolId, subjectId, lab_name } = req.body;
+      const { protocolId, subjectId, lab_name ,timePoint} = req.body;
       let labNameArray = lab_name ? JSON.parse(lab_name) : [];
 
       const page = parseInt(req.query.page) || 1;
@@ -288,6 +288,7 @@ exports.searchLabReportsByFilters = onRequest(async (req, res) => {
       const whereConditions = { email_to };
       if (protocolId) whereConditions.protocolId = protocolId;
       if (subjectId) whereConditions.subjectId = subjectId;
+      if(timePoint) whereConditions.timePoint = timePoint;
 
       let labReports = [];
 
@@ -452,27 +453,60 @@ exports.getLabDataOnTimePoint = onRequest(async (req, res) => {
       });
 
       const email_to = userDecode.email;
-      const { timePoint } = req.body;
-      
+      const { protocolId, subjectId, lab_name,timePoint } = req.body;
+      let labNameArray = lab_name ? JSON.parse(lab_name) : [];
       const page = parseInt(req.query.page) || 1;
       const pageSize = parseInt(req.query.pageSize) || 10;
 
-      const reports = await lab_report.findAll({
-        where: {timePoint: timePoint, email_to: email_to},
-        order: [['createdAt', 'DESC']],
-        include: [{
-          model: labreport_data,
-          as: 'labreport_data',
-          required: true,
-          include: [{
-            model: ref_range_data, // Make sure this model is defined in your Sequelize setup
-            as: 'refRangeData', // This 'as' must match the alias used in your association setup
-            attributes: ['refValue'], // Assuming you only want to retrieve the 'value' from ref_range
-            required: false // Set to true if every labreport_data must have a corresponding ref_range entry
-        }]
-        }]
-        
-      });
+        // Construct where conditions for lab_report
+        const whereConditions = { email_to , timePoint};
+        if (protocolId) whereConditions.protocolId = protocolId;
+        if (subjectId) whereConditions.subjectId = subjectId;
+
+        let labReports = [];
+
+        if (labNameArray.length > 0) {
+          // Fetch lab reports filtered by lab names if provided
+          labReports = await Promise.all(labNameArray.map(async (name) => {
+            return await lab_report.findAll({
+              where: whereConditions,
+              order: [['createdAt', 'DESC']],
+              include: [{
+                model: labreport_data,
+                as: 'labreport_data',
+                where: { lab_name: name },
+                required: true,
+                include: [{
+                  model: ref_range_data, // Make sure this model is defined in your Sequelize setup
+                  as: 'refRangeData', // This 'as' must match the alias used in your association setup
+                  attributes: ['refValue'], // Assuming you only want to retrieve the 'value' from ref_range
+                  required: false // Set to true if every labreport_data must have a corresponding ref_range entry
+              }]
+              }]
+            });
+          }));
+          labReports = labReports.flat(); // Flatten the array of lab reports
+        } else {
+          // Fetch all lab reports and their associated labreport_data without filtering by lab names
+          labReports = await lab_report.findAll({
+            where: {timePoint: timePoint, email_to: email_to},
+            order: [['createdAt', 'DESC']],
+            include: [{
+              model: labreport_data,
+              as: 'labreport_data',
+              required: true,
+              include: [{
+                model: ref_range_data, // Make sure this model is defined in your Sequelize setup
+                as: 'refRangeData', // This 'as' must match the alias used in your association setup
+                attributes: ['refValue'], // Assuming you only want to retrieve the 'value' from ref_range
+                required: false // Set to true if every labreport_data must have a corresponding ref_range entry
+            }]
+            }]
+            
+          });
+        }
+
+     
 
       function transformData(reports) {
         let transformed = [];
@@ -498,7 +532,7 @@ exports.getLabDataOnTimePoint = onRequest(async (req, res) => {
         return transformed;
     }
 
-    const transformedReports = transformData(reports);
+    const transformedReports = transformData(labReports);
 
        // Apply pagination to the filtered list
        const startIndex = (page - 1) * pageSize;
