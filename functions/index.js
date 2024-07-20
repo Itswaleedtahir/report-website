@@ -6,7 +6,7 @@ const { v4: uuidv4 } = require('uuid');
 const cors = require("cors")({ origin: true });
 const sgMail = require('@sendgrid/mail');
 const { Op, Sequelize } = require("sequelize");
-const { UplaodFile, PdfEmail, labReport, labReoprtData, MakeCsv ,pdfProcessor} = require("./helper/GpData");
+const { UplaodFile, PdfEmail, labReport, labReoprtData, MakeCsv ,pdfProcessor,findAllLabData,insertOrUpdateLabReport} = require("./helper/GpData");
 const { users, admin, pdf_email, labreport_data, lab_report, labreport_csv, ref_range_data } = require("./models/index");
 const fs = require('fs');
 const path = require('path');
@@ -14,6 +14,156 @@ const os = require('os');
 
 sgMail.setApiKey('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');
 
+
+exports.findAndUpdate = onRequest(async(req,res)=>{
+  const {protocolId,subjectId,time_of_collection,dateOfCollection,timePoint,lab_name,email_to}=req.body
+  // const data = await findAllLabData(protocolId,subjectId,dateOfCollection,timePoint,time_of_collection,lab_name,email_to)
+  // console.log("data",data)
+  const datatest = [
+    {
+        "type": "Time_of_Collecton",
+        "mentionText": "07:38"
+    },
+    {
+        "type": "Tests",
+        "properties": [
+            {
+                "type": "Ref_Range",
+                "mentionText": "63.0-552.0"
+            },
+            {
+                "type": "Result",
+                "mentionText": "Pending"
+            },
+            {
+                "type": "Test",
+                "mentionText": "Tissue Inhibitor of\nMetalloproteinase 1"
+            }
+        ]
+    },
+    {
+        "type": "Tests",
+        "properties": [
+            {
+                "type": "Ref_Range",
+                "mentionText": "<120"
+            },
+            {
+                "type": "Result",
+                "mentionText": "511.19"
+            },
+            {
+                "type": "Test",
+                "mentionText": "Hyaluronic Acid"
+            }
+        ]
+    },
+    {
+        "type": "Tests",
+        "properties": [
+            {
+                "type": "Ref_Range",
+                "mentionText": "3.50 -9.50"
+            },
+            {
+                "type": "Result",
+                "mentionText": "14.19"
+            },
+            {
+                "type": "Test",
+                "mentionText": "Amino-terminal propeptide of type III procollagen"
+            }
+        ]
+    },
+    {
+        "type": "Tests",
+        "properties": [
+            {
+                "type": "Ref_Range",
+                "mentionText": "N/A - See"
+            },
+            {
+                "type": "Result",
+                "mentionText": "11.88"
+            },
+            {
+                "type": "Test",
+                "mentionText": "Enhanced Liver Fibrosis Test (ELF)"
+            }
+        ]
+    },
+    {
+        "type": "protocolId",
+        "mentionText": "MGL-3196-19"
+    },
+    {
+        "type": "dateOfCollection",
+        "mentionText": "20-Dec-2023"
+    },
+    {
+        "type": "investigator",
+        "mentionText": "Dr. Anita Kohli"
+    },
+    {
+        "type": "timePoint",
+        "mentionText": "Week 40"
+    },
+    {
+        "type": "subjectId",
+        "mentionText": "0128-9013"
+    },
+    {
+        "type": "Tests",
+        "properties": [
+            {
+                "type": "Result",
+                "mentionText": "Pending"
+            },
+            {
+                "type": "Test",
+                "mentionText": "Phosphatidylethanol, Blood"
+            }
+        ]
+    }
+]
+const extractData = (data) => {
+  if (!Array.isArray(data)) {
+    console.error('Invalid input: data is not an array');
+    return;  // or throw an error, or handle this case as needed
+  }
+
+  const tests = data.filter(item => item.type === "Tests").map(test => {
+    // Assuming that the properties are nested arrays, flatten them first
+    const properties = test.properties.flat(); // Flatten the nested arrays
+
+    const labTest = properties.find(prop => prop.type === "Test");
+    const result = properties.find(prop => prop.type === "Result");
+    const refRange = properties.find(prop => prop.type === "Ref_Range");
+
+    return {
+      lab_provider: "Medpace",
+      lab_name: labTest ? labTest.mentionText : 'Unknown',
+      value: result ? result.mentionText : 'Pending',
+      refValue: refRange ? refRange.mentionText : 'N/A' // Handle missing reference range gracefully
+    };
+  });
+
+  return {
+    protocolId: data.find(item => item.type === "protocolId")?.mentionText || 'Unknown',
+    investigator: data.find(item => item.type === "investigator")?.mentionText || 'Unknown',
+    subjectId: data.find(item => item.type === "subjectId")?.mentionText || 'Unknown',
+    dateOfCollection: data.find(item => item.type === "dateOfCollection")?.mentionText || 'Unknown',
+    timePoint: data.find(item => item.type === "timePoint")?.mentionText || 'Unknown',
+    timeOfCollection: data.find(item => item.type === "Time_of_Collecton")?.mentionText || 'Unknown',
+    tests: tests
+  };
+};
+
+const extractedData = extractData(datatest);
+const id = 100
+const {message}=await insertOrUpdateLabReport(extractedData,email_to)
+  return res.status(200).send(message)
+})
 
 exports.SendGridEmailListener = onRequest(async (req, res) => {
   cors(req, res, async () => {
@@ -95,7 +245,7 @@ exports.SendGridEmailListener = onRequest(async (req, res) => {
      console.log("path",pdfPath)
 
      const AccessCheck = await users.findOne({where:{user_email:toAddress}})
-     console.log("Access",AccessCheck.dataValues.access)
+     console.log("Access",AccessCheck)
      if(AccessCheck.dataValues.access === 'Resume'){
      
      const apiUrl = 'http://gpdataservices.com/process-pdf/'; // Your API endpoint
@@ -138,23 +288,35 @@ exports.SendGridEmailListener = onRequest(async (req, res) => {
       };
       
       const extractedData = extractData(data);
-
       // Call function to upload file and get necessary data
       const { pdfname, destination } = await UplaodFile(pdfPath, extractedData);
       const pdfURL = `${process.env.STORAGE_URL}${destination}`;
       console.log("URL: ", pdfURL);
       const { pdfEmailId } = await PdfEmail(DateReceivedEmail, pdfname, destination, toAddress);
-
-      const { labReportId } = await labReport(extractedData, pdfEmailId, toAddress);
-
+      await findAllLabData(extractedData,toAddress)
+      const {message,datamade}=await insertOrUpdateLabReport(extractedData,toAddress)
+       console.log("message",datamade)
+      if(message === 'Add'){
+        const test = await findAllLabData(datamade ,toAddress)
+        const {message}=await insertOrUpdateLabReport(datamade,toAddress)
+        console.log("hereeee",message)
+        if(message==='Add'){
+          console.log("after update Add")
+      const { labReportId } = await labReport(datamade, pdfEmailId, toAddress);
       // Use extracted test data for lab report entries
-      const labdata = extractedData.tests;
+      const labdata = datamade.tests;
       console.log("data", labdata)
       const labreportEntry = await labReoprtData(labdata, labReportId);
       const status = "sent";
-      const csv = await MakeCsv(labReportId, extractedData);
+      const csv = await MakeCsv(labReportId, datamade);
       console.log("CSV: ", csv);
       return res.status(200).send({ message: "Process completed" });
+          }else{
+              return res.status(401).send({message:"Data after update already exist"})
+          }
+      }else{
+        return res.status(401).send({message:"Data already exists"})
+      }
     }else if(AccessCheck.dataValues.access === 'Paused'){
       return res.status(401).send({message:"User access is paused"})
     }else{
@@ -276,8 +438,13 @@ exports.searchLabReportsByFilters = onRequest(async (req, res) => {
           }
         });
       });
-
-      const email_to = userDecode.email;
+      let email_to
+      if(userDecode.user.isEmployee == true)
+      {
+        email_to = userDecode.user.invitedBy
+      }else{
+        email_to = userDecode.user.user_email
+      }
       const { protocolId, subjectId, lab_name ,timePoint} = req.body;
       let labNameArray = lab_name ? JSON.parse(lab_name) : [];
 
@@ -325,6 +492,7 @@ exports.searchLabReportsByFilters = onRequest(async (req, res) => {
               model: ref_range_data, // Make sure this model is defined in your Sequelize setup
               as: 'refRangeData', // This 'as' must match the alias used in your association setup
               attributes: ['refValue'], // Assuming you only want to retrieve the 'value' from ref_range
+              group: ['lab_name'],
               required: false // Set to true if every labreport_data must have a corresponding ref_range entry
           }]
           }]
@@ -332,28 +500,40 @@ exports.searchLabReportsByFilters = onRequest(async (req, res) => {
       }
 
       function transformData(reports) {
-        let transformed = [];
+        const uniqueReportsMap = new Map();
+    
         reports.forEach(report => {
             if (report.labreport_data && report.labreport_data.length > 0) {
                 report.labreport_data.forEach(data => {
-                    // Create a new object combining report and lab data information
-                    const combinedData = {
-                        ...report.dataValues, // Spread the lab report properties
-                        ...data.dataValues, // Spread the lab report data properties
-                        labreport_data: undefined // Explicitly remove the labreport_data array
-                    };
-                    delete combinedData.labreport_data; // Ensure labreport_data key is removed
-                    transformed.push(combinedData);
+                    // Generate a unique key based on properties
+                    const uniqueKey = `${report.protocolId}-${report.investigator}-${report.subjectId}-${report.dateOfCollection}-${report.timePoint}-${report.email_to}-${report.time_of_collection}-${data.lab_name}-${data.value}-${data.refRangeData.refValue}`;
+    
+                    // Check if this unique entry already exists
+                    if (!uniqueReportsMap.has(uniqueKey)) {
+                        const combinedData = {
+                            ...report.dataValues,
+                            ...data.dataValues,
+                            labreport_data: undefined // Explicitly remove the labreport_data array
+                        };
+                        delete combinedData.labreport_data; // Ensure labreport_data key is removed
+                        uniqueReportsMap.set(uniqueKey, combinedData);
+                    }
                 });
             } else {
                 // Handle cases where labreport_data is empty or undefined
                 const reportData = { ...report.dataValues };
                 delete reportData.labreport_data; // Remove the labreport_data if it's empty
-                transformed.push(reportData);
+                const uniqueKey = `${report.protocolId}-${report.investigator}-${report.subjectId}-${report.dateOfCollection}-${report.timePoint}-${report.email_to}-${report.time_of_collection}`;
+                if (!uniqueReportsMap.has(uniqueKey)) {
+                    uniqueReportsMap.set(uniqueKey, reportData);
+                }
             }
         });
-        return transformed;
+    
+        // Convert map values back to array
+        return Array.from(uniqueReportsMap.values());
     }
+    
 
 const transformedReports = transformData(labReports);
 
@@ -399,7 +579,13 @@ exports.getPlotValuesByFilters = onRequest(async(req,res)=>{
         });
       });
 
-      const email_to = userDecode.email;
+      let email_to
+    if(userDecode.user.isEmployee == true)
+    {
+      email_to = userDecode.user.invitedBy
+    }else{
+      email_to = userDecode.user.user_email
+    }
       const { protocolId, subjectId, lab_name } = req.body;
       let labNameArray = lab_name ? JSON.parse(lab_name) : [];
       let labReports = []
@@ -452,7 +638,13 @@ exports.getLabDataOnTimePoint = onRequest(async (req, res) => {
         });
       });
 
-      const email_to = userDecode.email;
+      let email_to
+    if(userDecode.user.isEmployee == true)
+    {
+      email_to = userDecode.user.invitedBy
+    }else{
+      email_to = userDecode.user.user_email
+    }
       const { protocolId, subjectId, lab_name,timePoint } = req.body;
       let labNameArray = lab_name ? JSON.parse(lab_name) : [];
       const page = parseInt(req.query.page) || 1;
@@ -586,7 +778,13 @@ exports.getLabReportNamesByEmail = onRequest(async (req, res) => {
 
       userDecode = user;
     })
-    const email_to = userDecode.email; // Extracted email from the token
+    let email_to
+    if(userDecode.user.isEmployee == true)
+    {
+      email_to = userDecode.user.invitedBy
+    }else{
+      email_to = userDecode.user.user_email
+    }
     if (!email_to) {
       return res.status(400).send("Email parameter is required.");
     }
@@ -624,7 +822,6 @@ exports.getLabReportNamesByEmail = onRequest(async (req, res) => {
     }
   });
 });
-
 
 exports.addAdmin = onRequest(async (req, res) => {
   cors(req, res, async () => {
@@ -716,6 +913,78 @@ exports.clientInvite = onRequest(async (req, res) => {
   })
 });
 
+exports.employeeInvite = onRequest(async (req, res) => {
+  cors(req, res, async () => {
+  
+    try {
+      const { clientEmail , email_to } = req.body;
+      if (!clientEmail) {
+        return res.status(400).send('user email is required.');
+      }
+      const existingUser = await users.findOne({ where: { user_email: clientEmail } });
+      if (existingUser) {
+        return res.status(400).json({ message: "Invitation link already sent" });
+      }
+
+      const token = uuidv4();
+      const invitationUrl = `http://gpdataservices.com/invite/${token}`;
+
+      // Store the token and email in the database for later verification
+      await users.create({ user_email: clientEmail, token , invitedBy:email_to , isEmployee:true });
+
+      // Send the email
+      const msg = {
+        to: clientEmail,
+        from: 'haseebpti27@gmail.com', // Replace with your verified sender email
+        subject: 'Invitation to Set Your Password',
+        text: `Please click the following link to set your password: ${invitationUrl}`,
+        html: `<p>Please click the following link to set your password: <a href="${invitationUrl}">${invitationUrl}</a></p>`,
+      };
+
+      await sgMail.send(msg);
+      console.log('Invitation email sent successfully', msg);
+      return res.status(200).send('Invitation email sent successfully');
+    } catch (error) {
+      console.error('Error sending invitation email:', error.response ? error.response.body : error.message);
+      return res.status(400).send({ error: error.message });
+    }
+  })
+});
+
+exports.sendSupportEmail = onRequest(async (req, res) => {
+  cors(req, res, async () => {
+
+    try {
+      const {email, subject, message } = req.body;
+
+      if (!email || !subject || !message) {
+        return res.status(400).send('Missing required fields: subject, message.');
+      }
+
+      console.log("email", email)
+      // Prepare the email content
+      const messageWithSenderInfo = `${message}\n\nThis email is from: ${email}`;
+      const htmlMessageWithSenderInfo = `<p>${message}</p><br><p>This email is from: ${email}</p>`;
+
+      // Send the email
+      const msg = {
+        to: "support@gpdataservices.com", // Correct the email address
+        from: 'haseebpti27@gmail.com', // Your verified support email
+        subject: subject,
+        text: messageWithSenderInfo,
+        html: htmlMessageWithSenderInfo,
+      };
+
+      await sgMail.send(msg);
+      console.log('Support email sent successfully', msg);
+      return res.status(200).send('Support email sent successfully');
+    } catch (error) {
+      console.error('Error sending support email:', error.response ? error.response.body : error.message);
+      return res.status(400).send({ error: error.message });
+    }
+  })
+});
+
 exports.updatePassword = onRequest(async (req, res) => {
   cors(req, res, async () => {
     try {
@@ -762,7 +1031,7 @@ exports.clientLogin = onRequest(async (req, res) => {
       }
 
       // Generate a JWT token
-      const token = jwt.sign({ id: user.id, email: user.user_email }, "your_secret_key", { expiresIn: "1d" });
+      const token = jwt.sign({ user }, "your_secret_key", { expiresIn: "1d" });
 
       res.json({ message: "Login successful", token });
     } catch (error) {
@@ -789,8 +1058,15 @@ exports.getClientReports = onRequest(async (req, res) => {
 
       userDecode = user;
     });
-
-    const email_to = userDecode.email;
+    console.log("user",userDecode.user)
+    let email_to
+    if(userDecode.user.isEmployee == true)
+    {
+      email_to = userDecode.user.invitedBy
+    }else{
+      email_to = userDecode.user.user_email
+    }
+    // const email_to = userDecode.email;
     const page = parseInt(req.query.page) || 1;
     const pageSize = parseInt(req.query.pageSize) || 10;
 
@@ -847,7 +1123,6 @@ exports.getClientReports = onRequest(async (req, res) => {
   });
 });
 
-
 exports.getProtocolIds = onRequest(async (req, res) => {
   cors(req, res, async () => {
     try {
@@ -867,8 +1142,13 @@ exports.getProtocolIds = onRequest(async (req, res) => {
         userDecode = user;
       })
 
-      const email_to = userDecode.email; // Extracted email from the token
-
+      let email_to
+    if(userDecode.user.isEmployee == true)
+    {
+      email_to = userDecode.user.invitedBy
+    }else{
+      email_to = userDecode.user.user_email
+    }
       const labReports = await lab_report.findAll({
         where: { email_to },
         attributes: [
@@ -904,8 +1184,13 @@ exports.getSubjectIds = onRequest(async (req, res) => {
 
         userDecode = user;
       })
-
-      const email_to = userDecode.email; // Extracted email from the token
+      let email_to
+      if(userDecode.user.isEmployee == true)
+      {
+        email_to = userDecode.user.invitedBy
+      }else{
+        email_to = userDecode.user.user_email
+      }
       const { protocolId } = req.body
 
       const labReports = await lab_report.findAll({
@@ -931,14 +1216,58 @@ exports.getSubjectIds = onRequest(async (req, res) => {
 exports.getInvitedClients = onRequest(async (req, res) => {
   cors(req, res, async () => {
     try {
-      // Fetch all records from the users table
-      const invitedUsers = await users.findAll();
+      // Fetch all records from the users table where isEmployee is false
+      const invitedUsers = await users.findAll({
+        where: {
+          isEmployee: false
+        }
+      });
 
       // Return the data as a JSON response
       return res.status(200).json(invitedUsers);
     } catch (error) {
       console.error("Error fetching users data:", error);
       return res.status(500).send("Error fetching users data.");
+    }
+  })
+})
+
+exports.getInvitedEmployees = onRequest(async (req, res) => {
+  cors(req, res, async () => {
+    const authHeader = req.headers['authorization'];
+    console.log("header", authHeader)
+    const token = authHeader
+    let userDecode;
+    if (!token) {
+      return res.sendStatus(401); // Unauthorized
+    }
+
+    jwt.verify(token, 'your_secret_key', (err, user) => {
+      if (err) {
+        return res.sendStatus(403); // Forbidden
+      }
+
+      userDecode = user;
+    })
+    try {
+      console.log("user",userDecode)
+      const email_to = userDecode.user.user_email;
+      // Fetch all records from the users table where isEmployee is true and invitedBy matches the user's email
+      const invitedUsers = await users.findAll({
+        where: {
+          isEmployee: true,
+          invitedBy: email_to
+        }
+      });
+
+      // Return the data as a JSON response
+      return res.status(200).json(invitedUsers);
+    } catch (error) {
+      if (error.name === 'JsonWebTokenError' || error.name === 'TokenExpiredError') {
+        return res.sendStatus(403); // Forbidden or token issues
+      }
+      console.error("Error processing request:", error);
+      return res.status(500).send("Error processing request.");
     }
   })
 })
@@ -986,7 +1315,7 @@ exports.getClientByEmail = onRequest(async(req,res)=>{
         return res.status(404).send({ error: 'User not found.' });
       }
 
-      res.status(200).send(user);
+      res.status(200).send([user]);
     } catch (error) {
       console.error('Failed to retrieve user:', error);
       res.status(500).send({ error: 'Failed to retrieve user.' });

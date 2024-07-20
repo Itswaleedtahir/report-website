@@ -18,14 +18,23 @@ module.exports = (sequelize, DataTypes) => {
         type: DataTypes.STRING,
         allowNull: true,
       },
-      token:{
-        type:DataTypes.STRING,
-        allowNull:true
+      token: {
+        type: DataTypes.STRING,
+        allowNull: true
       },
-      access:{
-        type:DataTypes.STRING,
-        allowNull:true,
+      access: {
+        type: DataTypes.STRING,
+        allowNull: true,
         defaultValue: 'Resume'
+      },
+      invitedBy: { // New column for who invited the user
+        type: DataTypes.STRING,
+        allowNull: true
+      },
+      isEmployee: { // New boolean column to indicate if the user is an employee
+        type: DataTypes.BOOLEAN,
+        allowNull: true,
+        defaultValue: false
       }
     },
     {

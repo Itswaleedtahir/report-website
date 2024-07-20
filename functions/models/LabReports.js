@@ -30,7 +30,7 @@ module.exports = (sequelize, DataTypes) => {
         allowNull: false,
       },
       dateOfCollection: {
-        type:DataTypes.DATE,
+        type:DataTypes.STRING,
         allowNull: false,
       },
       timePoint:{

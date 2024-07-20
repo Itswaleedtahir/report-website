@@ -106,6 +106,61 @@ const PdfEmail = async (Received, pdfname, destination, To) => {
     throw error;
   }
 };
+const insertOrUpdateLabReport = async (extractedData, email_to) => {
+  // Mapping and resolving Promises for all test checks
+  const labReportsPromises = extractedData.tests.map(async (test) => {
+    console.log("testinggggg,,,,",test)
+    const reports = await lab_report.findAll({
+      where: {
+        protocolId: extractedData.protocolId,
+        subjectId: extractedData.subjectId,
+        email_to: email_to,
+        timePoint: extractedData.timePoint,
+        time_of_collection: extractedData.timeOfCollection,
+        dateOfCollection: extractedData.dateOfCollection
+      },
+      include: [{
+        model: labreport_data,
+        as: 'labreport_data',
+        where: { lab_name: test.lab_name, value: test.value },
+        required: true,
+      }]
+    });
+    return {
+      lab_provider:"Medpace",
+      lab_name: test.lab_name,  // Storing the name of the test for reference
+      value: test.value,    // Storing the test value for reference
+      refValue: test.refValue, // A boolean to indicate if the test was found in the database
+      found: reports.length > 0
+    };
+  });
+
+  // Resolving all promises
+  const labReports = await Promise.all(labReportsPromises);
+
+  // Filter out unmatched tests
+  const unmatchedTests = labReports.filter(report => !report.found);
+
+  if (unmatchedTests.length > 0) {
+    console.log("Some tests did not match existing records. Adding new data for:", unmatchedTests.map(test => `${test.lab_name} with value ${test.value}`));
+    let datamade = {
+      protocolId: extractedData.protocolId,
+      investigator: extractedData.investigator,
+      subjectId: extractedData.subjectId,
+      dateOfCollection: extractedData.dateOfCollection,
+      timePoint: extractedData.timePoint,
+      timeOfCollection:extractedData.timeOfCollection,
+      tests:unmatchedTests
+    }
+    return { message: "Add", datamade };
+    // Here, you would typically call a function to add these new tests
+    // Example: await addNewLabReport(unmatchedTests, extractedData, email_to);
+  } else {
+    console.log("All tests match existing records. Skipping data insertion.");
+    return { message: "Skip" };
+  }
+};
+
 
 const labReport = async (data,pdfEmailId,To)=>{
 
@@ -127,6 +182,7 @@ const labReport = async (data,pdfEmailId,To)=>{
 
 const labReoprtData = async(labDataArray,labReportId)=>{
 try {
+  console.log("fataaaaa",labDataArray)
    // Create a map to store processed combinations for ref_range_data
    const refRangeDataMap = new Map();
 
@@ -159,7 +215,7 @@ try {
    // Now, handle the labreport_data entries
    const saveOperations = labDataArray.map(async (data) => {
        const { lab_provider, lab_name, value, isPending } = data;
-
+    console.log("dataaa",data)
        // Create a unique key for the map
        const mapKey = `${lab_provider}_${lab_name}`;
 
@@ -325,6 +381,79 @@ const pdfProcessor = async (pdfPath, apiUrl) => {
 //     return {formattedData};
 // }
 
+const findAllLabData = async (extractedData, email_to) => {
+  try {
+    console.log("dataaaa", extractedData);
+    const Labreports = await Promise.all(extractedData.tests.map(async (name) => {
+        return lab_report.findAll({
+            where: {
+                protocolId: extractedData.protocolId,
+                subjectId: extractedData.subjectId,
+                email_to: email_to,
+                timePoint: extractedData.timePoint,
+                time_of_collection: extractedData.timeOfCollection,
+                dateOfCollection: extractedData.dateOfCollection
+            },
+            include: [{
+                model: labreport_data,
+                as: 'labreport_data',
+                where: { lab_name: name.lab_name },
+                required: true,
+            }]
+        });
+    }));
+
+    console.log("Data collected:", Labreports);
+
+    const updateLabReports = async (Labreports, extractedData) => {
+      try {
+          const updatedRecords = [];
+
+          // Iterate over each report in Labreports array
+          for (const reportArray of Labreports) {
+              for (const report of reportArray) {
+                  for (const labData of report.labreport_data) {
+                      // Find the corresponding test data from extractedData
+                      const testData = extractedData.tests.find(test => test.lab_name === labData.lab_name);
+
+                      if (testData) {
+                          // Store original data
+                          const originalData = { ...labData.dataValues };
+
+                          // Perform update
+                          await labData.update({ value: testData.value });
+
+                          // Store updated data
+                          const updatedData = { ...labData.dataValues };
+
+                          // Collect original and updated data
+                          updatedRecords.push({
+                              originalData,
+                              updatedData
+                          });
+                      }
+                  }
+              }
+          }
+
+          console.log("All lab data values updated successfully.", updatedRecords);
+          return updatedRecords;  // Return details of updates
+      } catch (error) {
+          console.error("Error updating lab data values:", error);
+          throw error;  // Re-throw to handle it later if necessary
+      }
+    }
+
+    await updateLabReports(Labreports, extractedData);
+
+    return { Labreports };
+  } catch (error) {
+    console.log("Error occurred:", error);
+    return { error: error.message };
+  }
+}
+
+
 
 module.exports = {
   UplaodFile,
@@ -332,5 +461,7 @@ module.exports = {
   labReport,
   labReoprtData,
   MakeCsv,
-  pdfProcessor
+  pdfProcessor,
+  findAllLabData,
+  insertOrUpdateLabReport
 };
