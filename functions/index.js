@@ -1234,38 +1234,17 @@ exports.getInvitedClients = onRequest(async (req, res) => {
 
 exports.getInvitedEmployees = onRequest(async (req, res) => {
   cors(req, res, async () => {
-    const authHeader = req.headers['authorization'];
-    console.log("header", authHeader)
-    const token = authHeader
-    let userDecode;
-    if (!token) {
-      return res.sendStatus(401); // Unauthorized
-    }
-
-    jwt.verify(token, 'your_secret_key', (err, user) => {
-      if (err) {
-        return res.sendStatus(403); // Forbidden
-      }
-
-      userDecode = user;
-    })
     try {
-      console.log("user",userDecode)
-      const email_to = userDecode.user.user_email;
       // Fetch all records from the users table where isEmployee is true and invitedBy matches the user's email
       const invitedUsers = await users.findAll({
         where: {
           isEmployee: true,
-          invitedBy: email_to
         }
       });
 
       // Return the data as a JSON response
       return res.status(200).json(invitedUsers);
     } catch (error) {
-      if (error.name === 'JsonWebTokenError' || error.name === 'TokenExpiredError') {
-        return res.sendStatus(403); // Forbidden or token issues
-      }
       console.error("Error processing request:", error);
       return res.status(500).send("Error processing request.");
     }
