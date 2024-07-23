@@ -438,68 +438,57 @@ exports.searchLabReportsByFilters = onRequest(async (req, res) => {
           }
         });
       });
-      let email_to
-      if(userDecode.user.isEmployee == true)
-      {
-        email_to = userDecode.user.invitedBy
-      }else{
-        email_to = userDecode.user.user_email
-      }
-      const { protocolId, subjectId, lab_name ,timePoint} = req.body;
+
+      let email_to = userDecode.user.isEmployee ? userDecode.user.invitedBy : userDecode.user.user_email;
+      const { protocolId, subjectId, lab_name, timePoint } = req.body;
       let labNameArray = lab_name ? JSON.parse(lab_name) : [];
 
       const page = parseInt(req.query.page) || 1;
       const pageSize = parseInt(req.query.pageSize) || 10;
 
-      // Construct where conditions for lab_report
       const whereConditions = { email_to };
       if (protocolId) whereConditions.protocolId = protocolId;
       if (subjectId) whereConditions.subjectId = subjectId;
-      if(timePoint) whereConditions.timePoint = timePoint;
+      if (timePoint) whereConditions.timePoint = timePoint;
 
       let labReports = [];
 
       if (labNameArray.length > 0) {
-        // Fetch lab reports filtered by lab names if provided
         labReports = await Promise.all(labNameArray.map(async (name) => {
           return await lab_report.findAll({
             where: whereConditions,
-            order: [['createdAt', 'DESC']],
             include: [{
               model: labreport_data,
               as: 'labreport_data',
               where: { lab_name: name },
               required: true,
               include: [{
-                model: ref_range_data, // Make sure this model is defined in your Sequelize setup
-                as: 'refRangeData', // This 'as' must match the alias used in your association setup
-                attributes: ['refValue'], // Assuming you only want to retrieve the 'value' from ref_range
-                required: false // Set to true if every labreport_data must have a corresponding ref_range entry
-            }]
+                model: ref_range_data,
+                as: 'refRangeData',
+                attributes: ['refValue'],
+                required: false
+              }]
             }]
           });
         }));
-        labReports = labReports.flat(); // Flatten the array of lab reports
+        labReports = labReports.flat();
       } else {
-        // Fetch all lab reports and their associated labreport_data without filtering by lab names
         labReports = await lab_report.findAll({
           where: whereConditions,
           include: [{
             model: labreport_data,
             as: 'labreport_data',
-            required: false, // Include all labreport_data associated with the reports
+            required: false,
             include: [{
-              model: ref_range_data, // Make sure this model is defined in your Sequelize setup
-              as: 'refRangeData', // This 'as' must match the alias used in your association setup
-              attributes: ['refValue'], // Assuming you only want to retrieve the 'value' from ref_range
-              group: ['lab_name'],
-              required: false // Set to true if every labreport_data must have a corresponding ref_range entry
-          }]
+              model: ref_range_data,
+              as: 'refRangeData',
+              attributes: ['refValue'],
+              required: false
+            }]
           }]
         });
       }
-
-      function transformData(reports) {
+       function transformData(reports) {
         const uniqueReportsMap = new Map();
     
         reports.forEach(report => {
@@ -535,7 +524,22 @@ exports.searchLabReportsByFilters = onRequest(async (req, res) => {
     }
     
 
-const transformedReports = transformData(labReports);
+// Helper function to parse date from "DD-MMM-YYYY" format
+function parseDateString(dateStr) {
+  const [day, month, year] = dateStr.split("-");
+  const monthIndex = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'].indexOf(month);
+  return new Date(year, monthIndex, parseInt(day));
+}
+
+// Sort the reports by dateOfCollection after converting the string dates to Date objects
+labReports.sort((a, b) => {
+  // Accessing dateOfCollection from dataValues
+  const dateA = parseDateString(a.dataValues.dateOfCollection);
+  const dateB = parseDateString(b.dataValues.dateOfCollection);
+  return dateB - dateA; // Sort in descending order; swap dateA and dateB for ascending order
+});
+
+      const transformedReports = transformData(labReports);
 
       // Apply pagination to the filtered list
       const startIndex = (page - 1) * pageSize;
@@ -559,6 +563,8 @@ const transformedReports = transformData(labReports);
     }
   });
 });
+
+
 
 exports.getPlotValuesByFilters = onRequest(async(req,res)=>{
   cors(req, res, async () => {
@@ -1299,5 +1305,70 @@ exports.getClientByEmail = onRequest(async(req,res)=>{
       console.error('Failed to retrieve user:', error);
       res.status(500).send({ error: 'Failed to retrieve user.' });
     }
+  })
+})
+exports.getEmployeeByEmail = onRequest(async(req,res)=>{
+  cors(req,res,async()=>{
+    const {email} = req.body;
+    if (!email) {
+      return res.status(400).send({ error: 'Email parameter is required.' });
+    }
+
+    try {
+    // First, try to find all records where the email matches 'invitedBy'
+const usersInvitedBy = await users.findAll({
+  where: {
+    invitedBy: email,
+    isEmployee: true
+  }
+});
+
+let result;
+
+if (usersInvitedBy.length > 0) {
+  // If there are any users who were invited by the given email
+  result = usersInvitedBy;
+} else {
+  // If no users were invited by the given email, find one user by 'user_email'
+  const userByEmail = await users.findOne({
+    where: {
+      user_email: email,
+      isEmployee: true
+    }
+  });
+
+  result = userByEmail ? [userByEmail] : [];  // Return the user in an array or an empty array if none found
+}
+
+// Now 'result' holds either all the invited users or the single user by email
+ result;
+
+      if (!result) {
+        return res.status(404).send({ error: 'User not found.' });
+      }
+
+      res.status(200).send(result);
+    } catch (error) {
+      console.error('Failed to retrieve user:', error);
+      res.status(500).send({ error: 'Failed to retrieve user.' });
+    }
+  })
+})
+exports.deleteEmployee = onRequest(async(req,res)=>{
+  cors(req,res,async()=>{
+    try {
+      const {email} = req.body
+      const deleteUserEmail = await users.destroy({
+        where: {
+          user_email: email,
+          isEmployee: true
+        }
+      });
+      return res.status(200).send("User Deleted")
+    } catch (error) {
+      console.error('Failed to delete users:', error);
+      res.status(500).send({ message: 'Error deleting users.' });
+    }
+
   })
 })
