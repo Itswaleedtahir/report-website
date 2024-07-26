@@ -317,23 +317,23 @@ exports.SendGridEmailListener = onRequest({
      const apiUrl = 'http://gpdataservices.com/process-pdf/'; // Your API endpoint
   
    const {data} =await pdfProcessor(pdfPath, apiUrl)
-    // const extractedDataFormatted =  JSON.parse(data)
-    console.log("foramt",data)
       // Extract and map data from the parsed JSON response
       const extractData = (data) => {
         if (!Array.isArray(data)) {
           console.error('Invalid input: data is not an array');
           return;  // or throw an error, or handle this case as needed
         }
-      
         const tests = data.filter(item => item.type === "Tests").map(test => {
           // Assuming that the properties are nested arrays, flatten them first
           const properties = test.properties.flat(); // Flatten the nested arrays
       
           const labTest = properties.find(prop => prop.type === "Test");
           const result = properties.find(prop => prop.type === "Result");
-          const refRange = properties.find(prop => prop.type === "Ref_Range");
-      
+        
+          // Find the first refRange with a length less than or equal to 30 characters
+        const refRange = properties.filter(prop => prop.type === "Ref_Range")
+        .find(prop => prop.mentionText.length <= 30);
+
           return {
             lab_provider: "Medpace",
             lab_name: labTest ? labTest.mentionText : 'Unknown',
@@ -353,8 +353,29 @@ exports.SendGridEmailListener = onRequest({
         };
       };
       
-      const extractedData = extractData(data);
-      // Call function to upload file and get necessary data
+      let extractedData = extractData(data);
+ 
+function cleanTestData(data) {
+  // Iterate through tests and clean values and refValues
+  data.tests.forEach(test => {
+      // Remove alphabetic characters from value if not "Pending"
+      if (test.value !== "Pending") {
+          test.value = test.value.replace(/[a-zA-Z]/g, '').trim();
+      }
+
+      // Check refValue length and remove if too long
+      if (test.refValue && test.refValue.length > 30) {
+          console.log(`Removing long refValue: ${test.refValue}`);
+          delete test.refValue; // This will remove the refValue field from the test
+      }
+  });
+
+  return data;
+}
+ extractedData = cleanTestData(extractedData);
+// console.log("cleandddd",cleand)
+// return
+    // Call function to upload file and get necessary data
       const { pdfname, destination } = await UplaodFile(pdfPath, extractedData);
       const pdfURL = `${process.env.STORAGE_URL}${destination}`;
       console.log("URL: ", pdfURL);

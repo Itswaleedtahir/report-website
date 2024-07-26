@@ -35,7 +35,6 @@ const UplaodFile = async (pdfPath, data) => {
   }
 
   fs.accessSync(pdfPath, fs.constants.R_OK);
-
   const { protocolId, subjectId, investigator, timePoint } = data;
   const sanitizedProtocolId = protocolId.replace(/[^a-zA-Z0-9]/g, '_');
   const sanitizedSubjectId = subjectId.replace(/[^a-zA-Z0-9]/g, '_');
