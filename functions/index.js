@@ -165,7 +165,66 @@ const {message}=await insertOrUpdateLabReport(extractedData,email_to)
   return res.status(200).send(message)
 })
 
-exports.SendGridEmailListener = onRequest(async (req, res) => {
+exports.test = onRequest(async(req, res) => {
+  const buffer = req.body.toString('utf8');
+
+  function extractPDFAttachments(email) {
+      const boundaryMatch = email.match(/boundary="?([^"\s;]+)"?/);
+      if (!boundaryMatch) {
+          return []; // No boundary found
+      }
+      const boundary = boundaryMatch[1];
+
+      // Adjusted regex to skip over additional headers before Base64 content
+      const boundaryRegex = new RegExp(`--${boundary}(?:\\r\\n|\\r|\\n).*?Content-Type: application/pdf;[^]+?filename="([^"]+)"[^]+?X-Attachment-Id: [^\\r\\n]+(?:\\r\\n|\\r|\\n){2}([\\s\\S]*?)(?=--${boundary}|--$)`, 'gi');
+    
+      const attachments = [];
+      let match;
+    
+      while ((match = boundaryRegex.exec(email)) !== null) {
+          const [, filename, base64Content] = match;
+          // Trimming and removing any extra headers before the Base64 content starts
+          const cleanBase64 = base64Content.replace(/^[\\r\\n]+/, '').trim();
+          attachments.push({
+              filename,
+              base64Content: cleanBase64
+          });
+      }
+    
+      return attachments;
+  }
+
+  const attachments = extractPDFAttachments(buffer);
+  function saveFile(filename, base64Content, directory = './uploads') {
+    // Ensure the uploads directory exists
+    if (!fs.existsSync(directory)) {
+        fs.mkdirSync(directory, { recursive: true });
+    }
+
+    const filePath = path.join(directory, filename);
+    const buffer = Buffer.from(base64Content, 'base64');
+
+    fs.writeFile(filePath, buffer, (err) => {
+        if (err) {
+            console.error('Failed to save file:', err);
+        } else {
+            console.log(`${filename} has been saved successfully.`);
+        }
+    });
+}
+  attachments.forEach(attachment => {
+      saveFile(attachment.filename, attachment.base64Content);
+  });
+
+  console.log('All files processed.');
+  return res.send({ message: 'All files processed and saved.' });
+});
+
+
+exports.SendGridEmailListener = onRequest({
+  timeoutSeconds: 540,
+  memory: "1GiB",
+},async (req, res) => {
   cors(req, res, async () => {
     try {
       // Convert the buffer to a UTF-8 string
@@ -177,14 +236,11 @@ exports.SendGridEmailListener = onRequest(async (req, res) => {
     let toAddress = "";
     let fromAddress = "";
     let DateReceivedEmail = "";
-    let attachments = [];
     // Regular expressions to match 'To' and 'From' addresses
     const toPattern = /To: (.*)\r\n/;
     const fromPattern = /From: (.*)\r\n/;
     const DatePattern = /Date: (.*)\r\n/;
-    // Regex pattern for extracting attachment headers
-        const attachmentHeaderPattern = /Content-Type: application\/pdf;\s*name="([^"]+)"\r\nContent-Disposition: attachment;\s*filename="([^"]+)"\r\nContent-Transfer-Encoding: (\S+)\r\nContent-ID: <([^>]+)>\r\nX-Attachment-Id: (\S+)\r\n\r\n/;
-
+  
     // Extract 'To' and 'From' addresses
     const toMatch = parts.find(part => toPattern.test(part));
     if (toMatch) {
@@ -198,26 +254,33 @@ exports.SendGridEmailListener = onRequest(async (req, res) => {
     if (DateReceived) {
       DateReceivedEmail = DateReceived.match(DatePattern)[1].trim();
     }
-    // Extract attachment details and base64 encoded content
-    parts.forEach(part => {
-      const headerEndIndex = part.indexOf('X-Attachment-Id:') + 'X-Attachment-Id:'.length;
-      const base64StartIndex = part.indexOf('\r\n\r\n', headerEndIndex) + 4; // Start after the next CRLF pair
-      if (headerEndIndex > -1 && base64StartIndex > -1) {
-        const headers = part.substring(0, base64StartIndex).match(attachmentHeaderPattern);
-        if (headers) {
-          const [, name, filename, encoding, contentID, attachmentID] = headers;
-          const base64Content = part.substring(base64StartIndex).trim(); // The rest is assumed to be base64 content
-          attachments.push({
-            name,
-            filename,
-            encoding,
-            contentID,
-            attachmentID,
-            base64Content
-          });
-        }
+    function extractPDFAttachments(email) {
+      const boundaryMatch = email.match(/boundary="?([^"\s;]+)"?/);
+      if (!boundaryMatch) {
+          return []; // No boundary found
       }
-    });
+      const boundary = boundaryMatch[1];
+
+      // Adjusted regex to skip over additional headers before Base64 content
+      const boundaryRegex = new RegExp(`--${boundary}(?:\\r\\n|\\r|\\n).*?Content-Type: application/pdf;[^]+?filename="([^"]+)"[^]+?X-Attachment-Id: [^\\r\\n]+(?:\\r\\n|\\r|\\n){2}([\\s\\S]*?)(?=--${boundary}|--$)`, 'gi');
+    
+      const attachments = [];
+      let match;
+    
+      while ((match = boundaryRegex.exec(email)) !== null) {
+          const [, filename, base64Content] = match;
+          // Trimming and removing any extra headers before the Base64 content starts
+          const cleanBase64 = base64Content.replace(/^[\\r\\n]+/, '').trim();
+          attachments.push({
+              filename,
+              base64Content: cleanBase64
+          });
+      }
+    
+      return attachments;
+  }
+
+  const attachments = extractPDFAttachments(bufferDataString);
     // Prepare response or further processing
     let response = {
       to: toAddress,
@@ -225,8 +288,11 @@ exports.SendGridEmailListener = onRequest(async (req, res) => {
       DateReceivedEmail: DateReceivedEmail,
       attachments: attachments
     };
-    const pdfBufferContent=attachments[0].base64Content;
-    const pdfBuffer = Buffer.from(pdfBufferContent,'base64')
+    console.log("attachemnet",attachments)
+    console.log("response",response)
+    attachments.forEach(async (attachment) => {
+      console.log("hereeeee")
+      const pdfBuffer = Buffer.from(attachment.base64Content, 'base64');
         // Generate a timestamp-based filename
         const timestamp = new Date().getTime(); // Get current time in milliseconds
         const filename = `output-${timestamp}.pdf`;
@@ -310,61 +376,27 @@ exports.SendGridEmailListener = onRequest(async (req, res) => {
       const status = "sent";
       const csv = await MakeCsv(labReportId, datamade);
       console.log("CSV: ", csv);
-      return res.status(200).send({ message: "Process completed" });
+       console.log("Process completed")
           }else{
-              return res.status(401).send({message:"Data after update already exist"})
+              console.log("Data after update already exist")
           }
       }else{
-        return res.status(401).send({message:"Data already exists"})
+        console.log("Data already exists")
       }
     }else if(AccessCheck.dataValues.access === 'Paused'){
-      return res.status(401).send({message:"User access is paused"})
+      console.log("User access is paused")
     }else{
-      return res.status(404).send({message:"not found"})
+      console.log("not found")
     }
+    })
+    console.log("pdfs are processed")
+    return res.status(200).send("PDF's are processed")
     } catch (error) {
       console.error("Error processing request:", error);
       return res.status(500).send("Error processing request.");
     }
   })
 });
-
-// exports.SendGridEmailListeneTestingr = onRequest(async (req, res) => {
-//   cors(req, res, async () => {
-//     try {
-//       const bufferDataString = req.rawBody.toString('utf8');
-//       const boundary = bufferDataString.match(/boundary="?(.+?)"?(?:$|;)/)[1];
-//       let parts = bufferDataString.split("--" + boundary).map(part => part.trim()).filter(part => part);
-
-//       let attachments = [];
-
-//       parts.forEach((part, index) => {
-//         if (part.includes('Content-Type: application/pdf')) {
-//           const filenameMatch = part.match(/filename="([^"]+)"/);
-//           const filename = filenameMatch ? filenameMatch[1] : `Attachment_${index}.pdf`;
-
-//           const contentStart = part.indexOf('\r\n\r\n') + 4;
-//           const contentEnd = part.lastIndexOf('\r\n');
-//           if (contentStart !== -1 && contentEnd !== -1) {
-//             const pdfContent = part.substring(contentStart, contentEnd);
-//             const pdfBuffer = Buffer.from(pdfContent.trim(), 'base64'); // Assumes base64, check if this is necessary
-
-//             const filePath = path.join(__dirname, 'uploads', filename);
-//             fs.mkdirSync(path.dirname(filePath), { recursive: true });
-//             fs.writeFileSync(filePath, pdfBuffer);
-//             attachments.push({ filename, filePath });
-//           }
-//         }
-//       });
-
-//       console.log("Attachments processed:", attachments);
-//       res.status(200).send({ message: "PDFs processed and uploaded successfully", attachments });
-//     } catch (error) {
-//       console.error("Error processing request:", error);
-//       res.status(500).send("Error processing request.");
-//     }
-//   });
-// });
 
 exports.runMigrations = onRequest((req, res) => {
   exec('npx sequelize-cli db:migrate', (error, stdout, stderr) => {
@@ -586,12 +618,11 @@ exports.getPlotValuesByFilters = onRequest(async(req,res)=>{
       });
 
       let email_to
-    if(userDecode.user.isEmployee == true)
-    {
-      email_to = userDecode.user.invitedBy
-    }else{
-      email_to = userDecode.user.user_email
-    }
+      if(userDecode.user.isEmployee == true) {
+        email_to = userDecode.user.invitedBy;
+      } else {
+        email_to = userDecode.user.user_email;
+      }
       const { protocolId, subjectId, lab_name } = req.body;
       let labNameArray = lab_name ? JSON.parse(lab_name) : [];
       let labReports = []
@@ -608,7 +639,7 @@ exports.getPlotValuesByFilters = onRequest(async(req,res)=>{
       }));
 
       // Transform the data to only include specified fields
-      const transformedData = labReports.flat().map(report => {
+      let transformedData = labReports.flat().map(report => {
         return report.labreport_data.map(data => ({
           lab_name: data.lab_name,
           time_of_collection: report.time_of_collection,
@@ -617,13 +648,38 @@ exports.getPlotValuesByFilters = onRequest(async(req,res)=>{
         }));
       }).flat();
 
-      return res.status(201).send(transformedData);
+      function removeDuplicates(dataArray) {
+        const unique = dataArray.reduce((acc, current) => {
+          const x = acc.find(item => item.lab_name === current.lab_name && item.timePoint === current.timePoint && item.time_of_collection === current.time_of_collection && item.value === current.value);
+          if (!x) {
+            return acc.concat([current]);
+          } else {
+            return acc;
+          }
+        }, []);
+        return unique;
+      }
+      // Deduplicate entries
+      const uniqueData = removeDuplicates(transformedData);
+
+      // Helper function to parse date from "DD-MMM-YYYY" format
+      function parseDateString(dateStr) {
+        const [day, month, year] = dateStr.split("-");
+        const monthIndex = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'].indexOf(month);
+        return new Date(year, monthIndex, parseInt(day));
+      }
+
+      // Sort the data by dateOfCollection in descending order
+      uniqueData.sort((a, b) => parseDateString(b.dateOfCollection) - parseDateString(a.dateOfCollection));
+
+      return res.status(201).send(uniqueData);
     } catch(error) {
       console.log(error);
       return res.status(500).send(error);
     }
   });
 });
+
 
 exports.getLabDataOnTimePoint = onRequest(async (req, res) => {
   cors(req, res, async () => {
