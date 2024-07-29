@@ -6,7 +6,7 @@ const { v4: uuidv4 } = require('uuid');
 const cors = require("cors")({ origin: true });
 const sgMail = require('@sendgrid/mail');
 const { Op, Sequelize } = require("sequelize");
-const { UplaodFile, PdfEmail, labReport, labReoprtData, MakeCsv ,pdfProcessor,findAllLabData,insertOrUpdateLabReport} = require("./helper/GpData");
+const { UplaodFile, PdfEmail, labReport, labReoprtData, MakeCsv ,pdfProcessor,findAllLabData,insertOrUpdateLabReport,logoExtraction} = require("./helper/GpData");
 const { users, admin, pdf_email, labreport_data, lab_report, labreport_csv, ref_range_data } = require("./models/index");
 const fs = require('fs');
 const path = require('path');
@@ -222,7 +222,7 @@ exports.test = onRequest(async(req, res) => {
 
 
 exports.SendGridEmailListener = onRequest({
-  timeoutSeconds: 540,
+  timeoutSeconds: 3600,
   memory: "1GiB",
 },async (req, res) => {
   cors(req, res, async () => {
@@ -315,7 +315,8 @@ exports.SendGridEmailListener = onRequest({
      if(AccessCheck.dataValues.access === 'Resume'){
      
      const apiUrl = 'http://gpdataservices.com/process-pdf/'; // Your API endpoint
-  
+      const logoUrl = 'http://gpdataservices.com/ext-logo/'
+      const {logo}=await logoExtraction(pdfPath,logoUrl)
    const {data} =await pdfProcessor(pdfPath, apiUrl)
       // Extract and map data from the parsed JSON response
       const extractData = (data) => {
@@ -335,7 +336,7 @@ exports.SendGridEmailListener = onRequest({
         .find(prop => prop.mentionText.length <= 30);
 
           return {
-            lab_provider: "Medpace",
+            lab_provider: logo.lab_name,
             lab_name: labTest ? labTest.mentionText : 'Unknown',
             value: result ? result.mentionText : 'Pending',
             refValue: refRange ? refRange.mentionText : 'N/A' // Handle missing reference range gracefully
@@ -691,7 +692,7 @@ exports.getPlotValuesByFilters = onRequest(async(req,res)=>{
       }
 
       // Sort the data by dateOfCollection in descending order
-      uniqueData.sort((a, b) => parseDateString(b.dateOfCollection) - parseDateString(a.dateOfCollection));
+      uniqueData.sort((a, b) => parseDateString(a.dateOfCollection) - parseDateString(b.dateOfCollection));
 
       return res.status(201).send(uniqueData);
     } catch(error) {

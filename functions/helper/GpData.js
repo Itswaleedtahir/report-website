@@ -349,6 +349,32 @@ const pdfProcessor = async (pdfPath, apiUrl) => {
       return { data: null }; // Return null data on error, making it explicit
   }
 };
+const logoExtraction = async (pdfPath, apiUrl) => {
+  const formData = new FormData();
+  formData.append('file', fs.createReadStream(pdfPath), {
+      contentType: 'application/pdf', // Explicitly set the MIME type
+  });
+
+  try {
+      const response = await axios.post(apiUrl, formData, {
+          headers: {
+              ...formData.getHeaders(), // Necessary for multipart/form-data
+          },
+      });
+
+      // Check if response is valid and has data
+      if (response && response.data) {
+          console.log('PDF sent successfully:', response.data);
+          return { logo: response.data };
+      } else {
+          console.log('No data returned from the API');
+          return { logo: {} }; // Return an empty object if no data is received
+      }
+  } catch (error) {
+      console.error('Error sending PDF:', error.message);
+      return { data: null }; // Return null data on error, making it explicit
+  }
+};
 
 // const reformData = async (Data)=>{
 //     const formattedData = [];
@@ -462,5 +488,6 @@ module.exports = {
   MakeCsv,
   pdfProcessor,
   findAllLabData,
-  insertOrUpdateLabReport
+  insertOrUpdateLabReport,
+  logoExtraction
 };
