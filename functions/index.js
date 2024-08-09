@@ -872,11 +872,11 @@ exports.getLabReportNamesByEmail = onRequest(async (req, res) => {
     if (!email_to) {
       return res.status(400).send("Email parameter is required.");
     }
-
+    const {protocolId,subjectId} = req.body
     try {
       // Fetch lab reports by email
       const labReports = await lab_report.findAll({
-        where: { email_to: email_to },
+        where: { email_to: email_to , subjectId:subjectId,protocolId:protocolId},
         attributes: ['id'] // Only fetch the 'id' attribute
       });
 
