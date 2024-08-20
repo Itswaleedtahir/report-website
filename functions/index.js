@@ -164,60 +164,47 @@ exports.findAndUpdate = onRequest(async (req, res) => {
   const { message } = await insertOrUpdateLabReport(extractedData, email_to)
   return res.status(200).send(message)
 })
-//Testing function for debugging
+
 exports.test = onRequest(async (req, res) => {
-  const buffer = req.body.toString('utf8');
+  const emailContent = req.body.toString('utf8');
 
-  function extractPDFAttachments(email) {
-    const boundaryMatch = email.match(/boundary="?([^"\s;]+)"?/);
-    if (!boundaryMatch) {
-      return []; // No boundary found
-    }
-    const boundary = boundaryMatch[1];
-
-    // Adjusted regex to skip over additional headers before Base64 content
-    const boundaryRegex = new RegExp(`--${boundary}(?:\\r\\n|\\r|\\n).*?Content-Type: application/pdf;[^]+?filename="([^"]+)"[^]+?X-Attachment-Id: [^\\r\\n]+(?:\\r\\n|\\r|\\n){2}([\\s\\S]*?)(?=--${boundary}|--$)`, 'gi');
-
-    const attachments = [];
+  function extractPDFs(base64Content) {
+    const boundaryRegex = /filename="([^"]+.pdf)";[\s\S]+?base64\s([\s\S]*?)\n--/g;
     let match;
-
-    while ((match = boundaryRegex.exec(email)) !== null) {
-      const [, filename, base64Content] = match;
-      // Trimming and removing any extra headers before the Base64 content starts
-      const cleanBase64 = base64Content.replace(/^[\\r\\n]+/, '').trim();
-      attachments.push({
-        filename,
-        base64Content: cleanBase64
-      });
+    let pdfs = [];
+    while ((match = boundaryRegex.exec(base64Content)) !== null) {
+        pdfs.push({
+            filename: match[1],
+            data: match[2].replace(/[\r\n]+/g, '')  // Remove newlines in base64 encoding
+        });
     }
+    return pdfs;
+}
 
-    return attachments;
-  }
+// Extract PDF base64 strings
+const pdfs = extractPDFs(emailContent);
+console.log("pdfs",pdfs)
+// Path to the uploads directory
+const uploadsDir = path.join(__dirname, 'uploads');
 
-  const attachments = extractPDFAttachments(buffer);
-  function saveFile(filename, base64Content, directory = './uploads') {
-    // Ensure the uploads directory exists
-    if (!fs.existsSync(directory)) {
-      fs.mkdirSync(directory, { recursive: true });
-    }
+// Ensure the uploads directory exists
+if (!fs.existsSync(uploadsDir)) {
+    fs.mkdirSync(uploadsDir, { recursive: true });
+}
 
-    const filePath = path.join(directory, filename);
-    const buffer = Buffer.from(base64Content, 'base64');
+// Save each PDF
+pdfs.forEach((pdf, index) => {
+    const filePath = path.join(uploadsDir, `${Date.now()}_${pdf.filename}`);
+    const binaryData = Buffer.from(pdf.data, 'base64');
 
-    fs.writeFile(filePath, buffer, (err) => {
-      if (err) {
-        console.error('Failed to save file:', err);
-      } else {
-        console.log(`${filename} has been saved successfully.`);
-      }
+    fs.writeFile(filePath, binaryData, (err) => {
+        if (err) {
+            console.error(`Error writing PDF to file: ${pdf.filename}`, err);
+        } else {
+            console.log(`PDF saved: ${filePath}`);
+        }
     });
-  }
-  attachments.forEach(attachment => {
-    saveFile(attachment.filename, attachment.base64Content);
-  });
-
-  console.log('All files processed.');
-  return res.send({ message: 'All files processed and saved.' });
+});
 });
 
 // This function sets up a listener for SendGrid email webhook events and processes PDF attachments.
@@ -262,34 +249,65 @@ exports.SendGridEmailListener = onRequest({
         DateReceivedEmail = DateReceived.match(DatePattern)[1].trim();
       }
 
-      function extractPDFAttachments(email) {
-        const boundaryMatch = email.match(/boundary="?([^"\s;]+)"?/);
-        if (!boundaryMatch) {
-          return []; // No boundary found
-        }
-        const boundary = boundaryMatch[1];
-
-        // Adjusted regex to skip over additional headers before Base64 content
-        const boundaryRegex = new RegExp(`--${boundary}(?:\\r\\n|\\r|\\n).*?Content-Type: application/pdf;[^]+?filename="([^"]+)"[^]+?X-Attachment-Id: [^\\r\\n]+(?:\\r\\n|\\r|\\n){2}([\\s\\S]*?)(?=--${boundary}|--$)`, 'gi');
-
-        const attachments = [];
+      function extractPDFs(base64Content) {
+        const boundaryRegex = /filename="([^"]+.pdf)";[\s\S]+?base64\s([\s\S]*?)\n--/g;
         let match;
-
-        while ((match = boundaryRegex.exec(email)) !== null) {
-          const [, filename, base64Content] = match;
-          // Trimming and removing any extra headers before the Base64 content starts
-          const cleanBase64 = base64Content.replace(/^[\\r\\n]+/, '').trim();
-          attachments.push({
-            filename,
-            base64Content: cleanBase64
-          });
+        let pdfs = [];
+        while ((match = boundaryRegex.exec(base64Content)) !== null) {
+            pdfs.push({
+                filename: match[1],
+                base64Content: match[2].replace(/[\r\n]+/g, '')  // Remove newlines in base64 encoding
+            });
         }
+        return pdfs;
+    }
+    function extractPDFAttachments(email) {
+      const boundaryMatch = email.match(/boundary="?([^"\s;]+)"?/);
+      if (!boundaryMatch) {
+        return []; // No boundary found
+      }
+      const boundary = boundaryMatch[1];
 
-        return attachments;
+      // Adjusted regex to skip over additional headers before Base64 content
+      const boundaryRegex = new RegExp(`--${boundary}(?:\\r\\n|\\r|\\n).*?Content-Type: application/pdf;[^]+?filename="([^"]+)"[^]+?X-Attachment-Id: [^\\r\\n]+(?:\\r\\n|\\r|\\n){2}([\\s\\S]*?)(?=--${boundary}|--$)`, 'gi');
+
+      const attachments = [];
+      let match;
+
+      while ((match = boundaryRegex.exec(email)) !== null) {
+        const [, filename, base64Content] = match;
+        // Trimming and removing any extra headers before the Base64 content starts
+        const cleanBase64 = base64Content.replace(/^[\\r\\n]+/, '').trim();
+        attachments.push({
+          filename,
+          base64Content: cleanBase64
+        });
       }
 
-      const attachments = extractPDFAttachments(bufferDataString);
+      return attachments;
+    }
 
+    let attachments
+    if(fromAddress.includes("@outlook.com")){
+      // Regular expression to match email addresses
+const emailRegex = /[\w.-]+@[\w.-]+\.\w+/g;
+
+// Find all matches in the text
+ const toTheSender = toAddress.match(emailRegex);
+ toAddress=toTheSender[0]
+console.log("toaddress",toTheSender[0])
+
+ const FromTheSender = fromAddress.match(emailRegex);
+fromAddress=FromTheSender[0]
+console.log("toaddress",FromTheSender[0])
+
+ 
+      // Extract PDF base64 strings
+      attachments = extractPDFs(bufferDataString);
+    }else{
+      attachments = extractPDFAttachments(bufferDataString);
+    }
+    
       // Prepare response or further processing
       let response = {
         to: toAddress,
@@ -1216,7 +1234,7 @@ exports.clientLogin = onRequest(async (req, res) => {
       }
 
       // If authentication is successful, generate a JSON Web Token (JWT) for the user.
-      const token = jwt.sign({ user_id: user.id, email: user.user_email }, "your_secret_key", { expiresIn: "1d" });
+      const token = jwt.sign({ user_id: user.id, email: user.user_email,user , invitedBy:user.invitedBy, isEmployee:user.isEmployee }, "your_secret_key", { expiresIn: "1d" });
 
       // Return the token and a success message in the response.
       res.json({ message: "Login successful", token });
@@ -1341,7 +1359,7 @@ exports.getProtocolIds = onRequest(async (req, res) => {
           }
         });
       });
-
+      console.log("user",userDecode)
       // Determine the appropriate email to query lab reports based on user role
       const email_to = userDecode.user.isEmployee ? userDecode.user.invitedBy : userDecode.user.user_email;
 
