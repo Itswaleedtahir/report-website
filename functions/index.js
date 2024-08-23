@@ -1044,12 +1044,15 @@ exports.adminLogin = onRequest(async (req, res) => {
 exports.clientInvite = onRequest(async (req, res) => {
   cors(req, res, async () => { // Enable CORS to handle cross-origin requests
     try {
-      const { clientEmail } = req.body; // Extract client email from the request body
+      let { clientEmail } = req.body; // Extract client email from the request body
       if (!clientEmail) {
         // If client email is not provided, return a 400 Bad Request status
         return res.status(400).send('Client email is required.');
       }
 
+      // Remove the 'client.' subdomain from the email if it exists
+     const inviteClientEmail = clientEmail.replace('client.', '');
+      console.log("new email",inviteClientEmail)
       // Check if an invitation has already been sent to this email
       const existingUser = await users.findOne({ where: { user_email: clientEmail } });
       if (existingUser) {
@@ -1067,7 +1070,7 @@ exports.clientInvite = onRequest(async (req, res) => {
 
       // Email message setup
       const msg = {
-        to: clientEmail, // Recipient's email
+        to: inviteClientEmail, // Recipient's email after modification
         from: 'haseebpti27@gmail.com', // Your verified sender email
         subject: 'Invitation to Set Your Password',
         text: `Please click the following link to set your password: ${invitationUrl}`, // Text version of the email
@@ -1652,3 +1655,45 @@ exports.deleteEmployee = onRequest(async (req, res) => {
     }
   })
 });
+
+exports.forgotPassword = onRequest(async(req,res)=>{
+  cors(req,res,async()=>{
+    const { user_email } = req.body;
+    if (!user_email) {
+      return res.status(400).send('User email is required.');
+    }
+  
+    try {
+      const user = await users.findOne({ where: { user_email: user_email } });
+      if (!user) {
+        return res.status(404).send('User not found.');
+      }
+  
+      // Generate a new token and update the user record
+      const newToken = uuidv4();
+      user.token = newToken;
+      await user.save();
+         // Remove the 'client.' subdomain from the email if it exists
+     const inviteClientEmail = user_email.replace('client.', '');
+     console.log("new email",inviteClientEmail)
+      // Construct the password reset URL
+      const resetUrl = `http://gpdataservices.com/reset-password/${newToken}`;
+  
+      // Email setup for password reset
+      const msg = {
+        to: inviteClientEmail,
+        from: 'haseebpti27@gmail.com',
+        subject: 'Password Reset Request',
+        html: `<p>You requested a password reset. Please click on the following link to reset your password: <a href="${resetUrl}">${resetUrl}</a></p>`,
+      };
+  
+      // Send the email
+      await sgMail.send(msg);
+      console.log('Password reset email sent successfully');
+      res.status(200).send('Password reset email sent successfully.');
+    } catch (error) {
+      console.error('Failed to send password reset email:', error);
+      res.status(500).send('Failed to process password reset.');
+    }
+  })
+})
