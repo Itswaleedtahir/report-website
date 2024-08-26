@@ -12,7 +12,7 @@ const fs = require('fs');
 const path = require('path');
 const os = require('os');
 
-sgMail.setApiKey('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');
+sgMail.setApiKey('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');
 
 //Testing function for debugging
 exports.findAndUpdate = onRequest(async (req, res) => {
@@ -307,7 +307,7 @@ console.log("toaddress",FromTheSender[0])
     }else{
       attachments = extractPDFAttachments(bufferDataString);
     }
-    
+    toAddress = toAddress.replace('client.', '')
       // Prepare response or further processing
       let response = {
         to: toAddress,
@@ -338,13 +338,12 @@ console.log("toaddress",FromTheSender[0])
         console.log("Attachments:", attachments);
         console.log("Date,", DateReceivedEmail)
         console.log("path", pdfPath)
-
         const AccessCheck = await users.findOne({ where: { user_email: toAddress } })
         console.log("Access", AccessCheck)
         if (AccessCheck.dataValues.access === 'Resume') {
 
-          const apiUrl = 'http://gpdataservices.com/process-pdf/'; // API Endpoint for Google document AI for processing the PDF's
-          const logoUrl = 'http://gpdataservices.com/ext-logo/' // API Endpoint for extracting Logo from the pdf's
+          const apiUrl = 'https://gpdataservices.com/process-pdf/'; // API Endpoint for Google document AI for processing the PDF's
+          const logoUrl = 'https://gpdataservices.com/ext-logo/' // API Endpoint for extracting Logo from the pdf's
           const { logo } = await logoExtraction(pdfPath, logoUrl)
           const { data } = await pdfProcessor(pdfPath, apiUrl)
 
@@ -368,7 +367,7 @@ console.log("toaddress",FromTheSender[0])
                 .find(prop => prop.mentionText.length <= 30);
 
               return {
-                lab_provider: logo.lab_name,
+                lab_provider: logo.lab_name || "Medpace",
                 lab_name: labTest ? labTest.mentionText : 'Unknown',
                 value: result ? result.mentionText : 'Pending',
                 refValue: refRange ? refRange.mentionText : 'N/A' // Handle missing reference range gracefully
@@ -1051,8 +1050,8 @@ exports.clientInvite = onRequest(async (req, res) => {
       }
 
       // Remove the 'client.' subdomain from the email if it exists
-     const inviteClientEmail = clientEmail.replace('client.', '');
-      console.log("new email",inviteClientEmail)
+    //  const inviteClientEmail = clientEmail.replace('client.', '');
+    //   console.log("new email",inviteClientEmail)
       // Check if an invitation has already been sent to this email
       const existingUser = await users.findOne({ where: { user_email: clientEmail } });
       if (existingUser) {
@@ -1070,8 +1069,8 @@ exports.clientInvite = onRequest(async (req, res) => {
 
       // Email message setup
       const msg = {
-        to: inviteClientEmail, // Recipient's email after modification
-        from: 'haseebpti27@gmail.com', // Your verified sender email
+        to: clientEmail, // Recipient's email after modification
+        from: 'support@gpdataservices.com', // Your verified sender email
         subject: 'Invitation to Set Your Password',
         text: `Please click the following link to set your password: ${invitationUrl}`, // Text version of the email
         html: `<p>Please click the following link to set your password: <a href="${invitationUrl}">${invitationUrl}</a></p>`, // HTML version of the email
@@ -1119,7 +1118,7 @@ exports.employeeInvite = onRequest(async (req, res) => {
       // Setup the email message content
       const msg = {
         to: clientEmail, // Recipient's email
-        from: 'haseebpti27@gmail.com', // Your verified sender email
+        from: 'support@gpdataservices.com', // Your verified sender email
         subject: 'Invitation to Set Your Password',
         text: `Please click the following link to set your password: ${invitationUrl}`, // Text version of the email
         html: `<p>Please click the following link to set your password: <a href="${invitationUrl}">${invitationUrl}</a></p>`, // HTML version of the email
@@ -1160,7 +1159,7 @@ exports.sendSupportEmail = onRequest(async (req, res) => {
       // Email message setup
       const msg = {
         to: "support@gpdataservices.com", // The support team's email address
-        from: 'haseebpti27@gmail.com', // Your verified sender email address
+        from: 'support@gpdataservices.com', // Your verified sender email address
         subject: subject,
         text: messageWithSenderInfo,
         html: htmlMessageWithSenderInfo,
@@ -1428,6 +1427,13 @@ exports.getSubjectIds = onRequest(async (req, res) => {
         raw: true
       });
 
+      // Sort the subject IDs numerically
+      labReports.sort((a, b) => {
+        const numA = parseInt(a.subjectId.split('-')[1], 10);
+        const numB = parseInt(b.subjectId.split('-')[1], 10);
+        return numA - numB;
+      });
+
       // Return the list of distinct subject IDs if found
       return res.status(200).send(labReports);
     } catch (error) {
@@ -1437,8 +1443,9 @@ exports.getSubjectIds = onRequest(async (req, res) => {
       }
       return res.status(500).json({ message: 'Internal server error', error }); // Return Internal Server Error for other cases
     }
-  })
+  });
 });
+
 
 // This function sets up an HTTP endpoint to retrieve all non-employee users from the database.
 exports.getInvitedClients = onRequest(async (req, res) => {
@@ -1674,15 +1681,15 @@ exports.forgotPassword = onRequest(async(req,res)=>{
       user.token = newToken;
       await user.save();
          // Remove the 'client.' subdomain from the email if it exists
-     const inviteClientEmail = user_email.replace('client.', '');
-     console.log("new email",inviteClientEmail)
+    //  const inviteClientEmail = user_email.replace('client.', '');
+    //  console.log("new email",inviteClientEmail)
       // Construct the password reset URL
       const resetUrl = `http://gpdataservices.com/reset-password/${newToken}`;
   
       // Email setup for password reset
       const msg = {
-        to: inviteClientEmail,
-        from: 'haseebpti27@gmail.com',
+        to: user_email,
+        from: 'support@gpdataservices.com',
         subject: 'Password Reset Request',
         html: `<p>You requested a password reset. Please click on the following link to reset your password: <a href="${resetUrl}">${resetUrl}</a></p>`,
       };
