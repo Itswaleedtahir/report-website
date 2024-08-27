@@ -1071,9 +1071,17 @@ exports.clientInvite = onRequest(async (req, res) => {
       const msg = {
         to: clientEmail, // Recipient's email after modification
         from: 'support@gpdataservices.com', // Your verified sender email
-        subject: 'Invitation to Set Your Password',
-        text: `Please click the following link to set your password: ${invitationUrl}`, // Text version of the email
-        html: `<p>Please click the following link to set your password: <a href="${invitationUrl}">${invitationUrl}</a></p>`, // HTML version of the email
+        subject: 'Welcome to GP Data Services!',
+        text: `Welcome to GP Data Services! We’re thrilled to have you join our community. Click the following link to set your password: ${invitationUrl}`,
+        html: `<div style="font-family: Arial, sans-serif; font-size: 16px; color: #333;">
+                <h2>Welcome to GP Data Services!</h2>
+                <p>We’re thrilled to have you join our community and can’t wait to collaborate with you. Our platform is built to supercharge your data management, providing you with powerful tools to organize, trend, and recruit based off of your lab data—all designed to elevate your research efforts.</p>
+                <p>Together, we’ll make your data work harder and smarter for you.</p>
+                <p>Know more, Achieve more, Excel more</p>
+                <p>Click the link below to set up your password and dive in. We’re here to back you up every step of the way!</p>
+                <p><a href="${invitationUrl}" style="color: #1a73e8; text-decoration: none;">Set Your Password</a></p>
+                <img src="https://storage.googleapis.com/gpdata01/image/image-3.png" style="padding-top: 20px;"/>
+              </div>`,
       };
 
       // Send the email using sgMail
@@ -1372,6 +1380,10 @@ exports.getProtocolIds = onRequest(async (req, res) => {
           // Use Sequelize function to select distinct protocol IDs
           [Sequelize.fn('DISTINCT', Sequelize.col('protocolId')), 'protocolId']
         ],
+        order: [
+          // Order by 'protocolId' in ascending order
+          ['protocolId', 'ASC']
+        ],
         raw: true
       });
 
@@ -1386,6 +1398,7 @@ exports.getProtocolIds = onRequest(async (req, res) => {
     }
   })
 });
+
 
 // This function sets up an HTTP endpoint to retrieve distinct subject IDs based on protocol ID for authenticated users.
 exports.getSubjectIds = onRequest(async (req, res) => {
@@ -1684,14 +1697,23 @@ exports.forgotPassword = onRequest(async(req,res)=>{
     //  const inviteClientEmail = user_email.replace('client.', '');
     //  console.log("new email",inviteClientEmail)
       // Construct the password reset URL
-      const resetUrl = `http://gpdataservices.com/reset-password/${newToken}`;
+      const resetUrl = `https://gpdataservices.com/reset-password/${newToken}`;
   
       // Email setup for password reset
       const msg = {
-        to: user_email,
-        from: 'support@gpdataservices.com',
-        subject: 'Password Reset Request',
-        html: `<p>You requested a password reset. Please click on the following link to reset your password: <a href="${resetUrl}">${resetUrl}</a></p>`,
+        to: user_email, // Recipient's email after modification
+        from: 'support@gpdataservices.com', // Your verified sender email
+        subject: 'Welcome to GP Data Services!',
+        text: `Welcome to GP Data Services! We’re thrilled to have you join our community. Click the following link to reset your password: ${resetUrl}`,
+        html: `<div style="font-family: Arial, sans-serif; font-size: 16px; color: #333;">
+                <h2>Welcome to GP Data Services!</h2>
+                <p>We’re thrilled to have you join our community and can’t wait to collaborate with you. Our platform is built to supercharge your data management, providing you with powerful tools to organize, trend, and recruit based off of your lab data—all designed to elevate your research efforts.</p>
+                <p>Together, we’ll make your data work harder and smarter for you.</p>
+                <p>Know more, Achieve more, Excel more</p>
+                <p>Click the link below to reset your password and dive in. We’re here to back you up every step of the way!</p>
+                <p><a href="${resetUrl}" style="color: #1a73e8; text-decoration: none;">Set Your Password</a></p>
+                <img src="https://storage.googleapis.com/gpdata01/image/image-3.png" style="padding-top: 20px;"/>
+              </div>`,
       };
   
       // Send the email
