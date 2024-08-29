@@ -1048,7 +1048,11 @@ exports.clientInvite = onRequest(async (req, res) => {
         // If client email is not provided, return a 400 Bad Request status
         return res.status(400).send('Client email is required.');
       }
-
+      const existingAdmin = await admin.findOne({ where: { user_email: clientEmail } });
+      if(existingAdmin){
+        // If an invitation already exists, return a 400 Bad Request status with a message
+        return res.status(400).json({ message: "This is an Admin Account" });
+      }
       // Remove the 'client.' subdomain from the email if it exists
     //  const inviteClientEmail = clientEmail.replace('client.', '');
     //   console.log("new email",inviteClientEmail)
