@@ -1129,8 +1129,16 @@ exports.employeeInvite = onRequest(async (req, res) => {
         from: 'support@gpdataservices.com', // Your verified sender email
         subject: 'Invitation to Set Your Password',
         text: `Please click the following link to set your password: ${invitationUrl}`, // Text version of the email
-        html: `<p>Please click the following link to set your password: <a href="${invitationUrl}">${invitationUrl}</a></p>`, // HTML version of the email
-      };
+        html: `<div style="font-family: Arial, sans-serif; font-size: 16px; color: #333;">
+        <h2>Welcome to GP Data Services!</h2>
+        <p>We’re thrilled to have you join our community and can’t wait to collaborate with you. Our platform is built to supercharge your data management, providing you with powerful tools to organize, trend, and recruit based off of your lab data—all designed to elevate your research efforts.</p>
+        <p>Together, we’ll make your data work harder and smarter for you.</p>
+        <p>Know more, Achieve more, Excel more</p>
+        <p>Click the link below to set up your password and dive in. We’re here to back you up every step of the way!</p>
+        <p><a href="${invitationUrl}" style="color: #1a73e8; text-decoration: none;">Set Your Password</a></p>
+        <img src="https://storage.googleapis.com/gpdata01/image/image-3.png" style="padding-top: 20px;" width="300px"/>
+      </div>`,
+}
 
       // Send the email using SendGrid's mail service
       await sgMail.send(msg);
