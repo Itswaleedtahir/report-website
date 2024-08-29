@@ -28,9 +28,6 @@ module.exports = (sequelize, DataTypes) => {
       },
       pdfPath:{
         type: DataTypes.STRING
-      },
-      To:{
-        type: DataTypes.STRING
       }
     },
     {

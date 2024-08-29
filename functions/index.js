@@ -1080,7 +1080,7 @@ exports.clientInvite = onRequest(async (req, res) => {
                 <p>Know more, Achieve more, Excel more</p>
                 <p>Click the link below to set up your password and dive in. We’re here to back you up every step of the way!</p>
                 <p><a href="${invitationUrl}" style="color: #1a73e8; text-decoration: none;">Set Your Password</a></p>
-                <img src="https://storage.googleapis.com/gpdata01/image/image-3.png" style="padding-top: 20px;"/>
+                <img src="https://storage.googleapis.com/gpdata01/image/image-3.png" style="padding-top: 20px;" width="300px"/>
               </div>`,
       };
 
@@ -1712,7 +1712,7 @@ exports.forgotPassword = onRequest(async(req,res)=>{
                 <p>Know more, Achieve more, Excel more</p>
                 <p>Click the link below to reset your password and dive in. We’re here to back you up every step of the way!</p>
                 <p><a href="${resetUrl}" style="color: #1a73e8; text-decoration: none;">Set Your Password</a></p>
-                <img src="https://storage.googleapis.com/gpdata01/image/image-3.png" style="padding-top: 20px;"/>
+                <img src="https://storage.googleapis.com/gpdata01/image/image-3.png" style="padding-top: 20px;" width="300px"/>
               </div>`,
       };
   
@@ -1725,4 +1725,204 @@ exports.forgotPassword = onRequest(async(req,res)=>{
       res.status(500).send('Failed to process password reset.');
     }
   })
-})
+});
+
+exports.onlyLabNameSearch = onRequest({
+  timeoutSeconds: 3600, // Set the function timeout to 1 hour
+  memory: "1GiB", // Allocate 1 GiB of memory to the function
+},async(req, res) => {
+  cors(req, res, async () => {
+    // Retrieve the authorization header from the request
+    const authHeader = req.headers['authorization'];
+    console.log("header", authHeader); // Log the authorization header for debugging
+
+    // If no authorization header is found, send a 401 Unauthorized response
+    if (!authHeader) {
+      return res.sendStatus(401);
+    }
+
+    try {
+      // Verify the JWT from the authorization header
+      const userDecode = await new Promise((resolve, reject) => {
+        jwt.verify(authHeader, 'your_secret_key', (err, user) => {
+          if (err) {
+            reject(new Error('Forbidden')); // Reject the promise if JWT is invalid
+          } else {
+            resolve(user); // Resolve the promise with the decoded user if JWT is valid
+          }
+        });
+      });
+
+      // Determine the appropriate email based on user role
+      const email_to = userDecode.user.isEmployee ? userDecode.user.invitedBy : userDecode.user.user_email;
+
+      // Extract and parse the lab_name JSON-encoded string from the request body
+      const { lab_name_json, minValue, maxValue } = req.body;
+      let lab_names = JSON.parse(lab_name_json);
+      console.log("labnames",lab_names)
+      // Construct value condition based on minValue and maxValue
+      const valueCondition = {};
+      if (minValue !== undefined && maxValue !== undefined) {
+        valueCondition.value = { [Sequelize.Op.between]: [minValue, maxValue] };
+      } else if (minValue !== undefined) {
+        valueCondition.value = { [Sequelize.Op.gte]: minValue };
+      } else if (maxValue !== undefined) {
+        valueCondition.value = { [Sequelize.Op.lte]: maxValue };
+      }
+
+       // Set up pagination parameters
+       const page = parseInt(req.query.page) || 1;
+       const pageSize = parseInt(req.query.pageSize) || 10;
+      let labReports = []
+      let pdfPath
+      // Perform the query to fetch all reports that match the email_to and lab_name conditions
+      if (lab_names.length > 0) {
+        let results = await Promise.all(lab_names.map(async (name) => {
+          return await lab_report.findAll({
+            where: { email_to },
+            include: [{
+              model: labreport_data,
+              as: 'labreport_data',
+              where: { lab_name: name, ...valueCondition },
+              required: true,
+              include: [{
+                model: ref_range_data,
+                as: 'refRangeData',
+                attributes: ['refValue'],
+                required: false
+              }]
+            }]
+          });
+        }));
+        labReports = results.flat(); // Flatten the array of results
+         // Fetch PdfEmail paths for each LabReport
+      const pdfResults = await Promise.all(labReports.map(async (report) => {
+        return  await pdf_email.findAll({
+          where: { id: report.pdfEmailIdfk }
+        });
+      }));
+      pdfPath = pdfResults.flat()
+      }
+      const pdfPathMap = pdfPath.reduce((acc, pdf) => ({
+        ...acc,
+        [pdf.id]: pdf.dataValues.pdfPath  // Directly access the pdfPath from dataValues
+      }), {});
+        // Helper function to transform and de-duplicate lab reports data
+        function transformData(reports, pdfPathMap) {
+          console.log("reports", reports);
+          console.log("paths", pdfPathMap);
+          const flattenedReports = [];
+          reports.forEach(report => {
+            report.labreport_data.forEach(data => {  // Ensure that you're accessing the right property for lab report data
+              const combinedReport = {
+                id: data.id,
+                pdfEmailIdfk: report.pdfEmailIdfk,
+                protocolId: report.protocolId,
+                investigator: report.investigator,
+                subjectId: report.subjectId,
+                dateOfCollection: report.dateOfCollection,
+                timePoint: report.timePoint,
+                email_to: report.email_to,
+                time_of_collection: report.time_of_collection,
+                createdAt: data.createdAt,
+                updatedAt: data.updatedAt,
+                labReportFk: data.labReportFk,  // Typo corrected from labReoprtFk to labReportFk
+                refRangeFk: data.refRangeFk,
+                lab_name: data.lab_name,
+                value: data.value,
+                isPending: data.isPending,
+                refValue: data.refRangeData ? data.refRangeData.refValue : 'N/A',
+                pdfPath: pdfPathMap[report.pdfEmailIdfk]  // Fetching pdfPath from the map using pdfEmailIdfk
+              };
+              flattenedReports.push(combinedReport);
+            });
+          });
+          return flattenedReports;
+        }
+        
+  
+        // Transform and paginate the reports
+        const transformedReports = transformData(labReports,pdfPathMap);
+
+        const startIndex = (page - 1) * pageSize;
+        const paginatedLabReports = transformedReports.slice(startIndex, startIndex + pageSize);
+  
+
+      // Send the paginated results as the response
+      return res.json({
+        data: paginatedLabReports,
+        pagination: {
+          totalItems: transformedReports.length,
+          totalPages: Math.ceil(transformedReports.length / pageSize),
+          currentPage: page,
+          pageSize
+        }
+      });
+    } catch (error) {
+      console.error('Error in processing:', error);
+      if (error.message === 'Forbidden') {
+        return res.sendStatus(403);
+      }
+      return res.status(500).send("Internal server error");
+    }
+  });
+});
+
+exports.getLabReportNamesByEmailForSearch = onRequest(async (req, res) => {
+  cors(req, res, async () => {
+    const authHeader = req.headers['authorization'];
+    console.log("header", authHeader);  // Log the received authorization header for debugging
+    if (!authHeader) {
+      return res.sendStatus(401); // Return Unauthorized if no authorization header is present
+    }
+
+    try {
+      // Decode and verify the JWT from the authorization header asynchronously
+      const userDecode = await new Promise((resolve, reject) => {
+        jwt.verify(authHeader, 'your_secret_key', (err, user) => {
+          if (err) {
+            reject('Forbidden'); // Reject the promise if the token is invalid
+          } else {
+            resolve(user); // Resolve with the decoded user information if the token is valid
+          }
+        });
+      });
+
+      // Determine the appropriate email to filter lab reports based on user role
+      let email_to = userDecode.user.isEmployee ? userDecode.user.invitedBy : userDecode.user.user_email;
+      if (!email_to) {
+        return res.status(400).send("Email parameter is required."); // Check if email is parsed correctly
+      }
+
+      // Perform a database query to fetch lab reports matching the specified criteria
+      const labReports = await lab_report.findAll({
+        where: { email_to: email_to},
+        attributes: ['id'] // Only fetch the 'id' attribute for minimal data retrieval
+      });
+
+      if (labReports.length === 0) {
+        return res.status(404).send("No lab reports found for the given email."); // Handle case with no matches
+      }
+
+      // Extract IDs from the lab reports to fetch corresponding lab data
+      const labReportIds = labReports.map(report => report.id);
+
+      // Fetch unique lab names from labreport_data using the extracted IDs
+      const labReportData = await labreport_data.findAll({
+        where: { labReoprtFk: labReportIds },
+        attributes: ['lab_name'],
+        group: ['lab_name'] // Group by 'lab_name' to ensure uniqueness
+      });
+
+      // Extract lab names from the results and prepare the response
+      const labNames = labReportData.map(data => data.lab_name);
+      return res.json({ labNames }); // Send the list of unique lab names as a response
+    } catch (error) {
+      if (error === 'Forbidden') {
+        return res.sendStatus(403); // Forbidden status if JWT verification fails
+      }
+      console.error('Error:', error); // Log any errors for debugging
+      return res.status(500).send("Internal server error"); // Return Internal Server Error for other cases
+    }
+  });
+});
