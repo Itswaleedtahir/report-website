@@ -28,6 +28,11 @@ module.exports = (sequelize, DataTypes) => {
       },
       pdfPath:{
         type: DataTypes.STRING
+      },
+      isSigned:{
+        type: DataTypes.BOOLEAN,
+      allowNull: false,
+      defaultValue: false
       }
     },
     {

@@ -4,7 +4,7 @@ const fs = require('fs');
 const path = require('path')
 const { Parser } = require('json2csv');
 const { Storage } = require('@google-cloud/storage');
-const {users,pdf_email,labreport_data ,lab_report,labreport_csv,ref_range_data} = require("../models/index");
+const {users,pdf_email,labreport_data ,lab_report,labreport_csv,ref_range_data,signedPdfs} = require("../models/index");
 
 // Create the credentials object from environment variables
 const googleCredentials = {
@@ -94,6 +94,68 @@ const UplaodFile = async (pdfPath, data) => {
   }
 };
 
+const UploadFile = async (pdfUrl, data) => {
+  console.log("insdie uplaod" , pdfUrl,data)
+  const newName = data.name;
+
+  // Temporarily download the PDF to a local path
+  const localPath = path.join(__dirname, 'uploads');
+  const writer = fs.createWriteStream(localPath);
+
+  try {
+    const response = await axios({
+      url: pdfUrl,
+      method: 'GET',
+      responseType: 'stream'
+    });
+    response.data.pipe(writer);
+
+    await new Promise((resolve, reject) => {
+      writer.on('finish', resolve);
+      writer.on('error', reject);
+    });
+
+    // Upload the PDF file to Google Cloud Storage
+    const bucketName = 'gpdata01';
+    const destination = `signedPdf/${newName}`;
+    const bucket = storage.bucket(bucketName);
+    const file = bucket.file(destination);
+    await file.save(fs.readFileSync(localPath), {
+      metadata: { contentType: 'application/pdf' },
+    });
+
+    console.log('File uploaded to Google Cloud Storage:', `https://storage.googleapis.com/${bucketName}/${destination}`);
+
+    // Update the record in the database
+    const pdfRecord = await signedPdfs.findOne({ where: { pdf_id: data.id } });
+    const pdfEmailId = pdfRecord.dataValues.pdfEmailIdfk
+    console.log("record",pdfRecord.dataValues.pdfEmailIdfk)
+    const userEmail = await pdf_email.findOne({where:{
+      id:pdfEmailId
+    }})
+    const email_to = userEmail.dataValues.email_to
+    console.log("userEmail",userEmail)
+    const pdfEmailUpdate = await pdf_email.update( { isSigned: true },
+      {
+        where: {
+          id: pdfEmailId,
+        },
+      },)
+    if (pdfRecord) {
+      await pdfRecord.update({ pdfUrl:destination,isSigned:true , email_to:email_to});
+      console.log('Database updated successfully with new PDF URL');
+    }
+
+    // Optionally delete the local file
+    fs.unlinkSync(localPath);
+    console.log('Local PDF file deleted successfully');
+
+    return { pdfName: newName, destination: `https://storage.googleapis.com/${bucketName}/${destination}` };
+  } catch (error) {
+    console.error('Failed to process PDF:', error);
+    throw new Error('Failed to process PDF: ' + error.message);
+  }
+};
 
 /**
  * Creates a record for a PDF email transaction in the database.
@@ -568,5 +630,6 @@ module.exports = {
   pdfProcessor,
   findAllLabData,
   insertOrUpdateLabReport,
-  logoExtraction
+  logoExtraction,
+  UploadFile
 };

@@ -1,0 +1,11 @@
+{
+  "version": "1.0",
+  "apis": [
+    {
+      "identifier": "signwell",
+      "source": "@signwell/v1.0#dzogahlxn4l3k3",
+      "integrity": "sha512-AXGhZCNc2ZvJNpB65s6Oa0X1VnkKD02FBpOy18INGjvRFWLnZJIhjUcyKm0vxnkNtvX4MattGbhFYdrIHs5AwQ==",
+      "installerVersion": "6.1.2"
+    }
+  ]
+}

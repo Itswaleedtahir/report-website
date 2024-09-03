@@ -2,17 +2,21 @@ const { exec } = require('child_process');
 const { onRequest } = require("firebase-functions/v2/https");
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
+const axios = require('axios');
 const { v4: uuidv4 } = require('uuid');
 const cors = require("cors")({ origin: true });
 const sgMail = require('@sendgrid/mail');
 const { Op, Sequelize } = require("sequelize");
-const { UplaodFile, PdfEmail, labReport, labReoprtData, MakeCsv, pdfProcessor, findAllLabData, insertOrUpdateLabReport, logoExtraction } = require("./helper/GpData");
-const { users, admin, pdf_email, labreport_data, lab_report, labreport_csv, ref_range_data } = require("./models/index");
+const { UplaodFile, PdfEmail, labReport, labReoprtData, MakeCsv, pdfProcessor, findAllLabData, insertOrUpdateLabReport, logoExtraction, UploadFile } = require("./helper/GpData");
+const { users, admin, pdf_email, labreport_data, lab_report, labreport_csv, ref_range_data, signedPdfs } = require("./models/index");
 const fs = require('fs');
+const { PDFDocument } = require('pdf-lib');
+const signwell = require('@api/signwell');
 const path = require('path');
 const os = require('os');
 
 sgMail.setApiKey('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');
+
 
 //Testing function for debugging
 exports.findAndUpdate = onRequest(async (req, res) => {
@@ -173,38 +177,38 @@ exports.test = onRequest(async (req, res) => {
     let match;
     let pdfs = [];
     while ((match = boundaryRegex.exec(base64Content)) !== null) {
-        pdfs.push({
-            filename: match[1],
-            data: match[2].replace(/[\r\n]+/g, '')  // Remove newlines in base64 encoding
-        });
+      pdfs.push({
+        filename: match[1],
+        data: match[2].replace(/[\r\n]+/g, '')  // Remove newlines in base64 encoding
+      });
     }
     return pdfs;
-}
+  }
 
-// Extract PDF base64 strings
-const pdfs = extractPDFs(emailContent);
-console.log("pdfs",pdfs)
-// Path to the uploads directory
-const uploadsDir = path.join(__dirname, 'uploads');
+  // Extract PDF base64 strings
+  const pdfs = extractPDFs(emailContent);
+  console.log("pdfs", pdfs)
+  // Path to the uploads directory
+  const uploadsDir = path.join(__dirname, 'uploads');
 
-// Ensure the uploads directory exists
-if (!fs.existsSync(uploadsDir)) {
+  // Ensure the uploads directory exists
+  if (!fs.existsSync(uploadsDir)) {
     fs.mkdirSync(uploadsDir, { recursive: true });
-}
+  }
 
-// Save each PDF
-pdfs.forEach((pdf, index) => {
+  // Save each PDF
+  pdfs.forEach((pdf, index) => {
     const filePath = path.join(uploadsDir, `${Date.now()}_${pdf.filename}`);
     const binaryData = Buffer.from(pdf.data, 'base64');
 
     fs.writeFile(filePath, binaryData, (err) => {
-        if (err) {
-            console.error(`Error writing PDF to file: ${pdf.filename}`, err);
-        } else {
-            console.log(`PDF saved: ${filePath}`);
-        }
+      if (err) {
+        console.error(`Error writing PDF to file: ${pdf.filename}`, err);
+      } else {
+        console.log(`PDF saved: ${filePath}`);
+      }
     });
-});
+  });
 });
 
 // This function sets up a listener for SendGrid email webhook events and processes PDF attachments.
@@ -254,60 +258,60 @@ exports.SendGridEmailListener = onRequest({
         let match;
         let pdfs = [];
         while ((match = boundaryRegex.exec(base64Content)) !== null) {
-            pdfs.push({
-                filename: match[1],
-                base64Content: match[2].replace(/[\r\n]+/g, '')  // Remove newlines in base64 encoding
-            });
+          pdfs.push({
+            filename: match[1],
+            base64Content: match[2].replace(/[\r\n]+/g, '')  // Remove newlines in base64 encoding
+          });
         }
         return pdfs;
-    }
-    function extractPDFAttachments(email) {
-      const boundaryMatch = email.match(/boundary="?([^"\s;]+)"?/);
-      if (!boundaryMatch) {
-        return []; // No boundary found
       }
-      const boundary = boundaryMatch[1];
+      function extractPDFAttachments(email) {
+        const boundaryMatch = email.match(/boundary="?([^"\s;]+)"?/);
+        if (!boundaryMatch) {
+          return []; // No boundary found
+        }
+        const boundary = boundaryMatch[1];
 
-      // Adjusted regex to skip over additional headers before Base64 content
-      const boundaryRegex = new RegExp(`--${boundary}(?:\\r\\n|\\r|\\n).*?Content-Type: application/pdf;[^]+?filename="([^"]+)"[^]+?X-Attachment-Id: [^\\r\\n]+(?:\\r\\n|\\r|\\n){2}([\\s\\S]*?)(?=--${boundary}|--$)`, 'gi');
+        // Adjusted regex to skip over additional headers before Base64 content
+        const boundaryRegex = new RegExp(`--${boundary}(?:\\r\\n|\\r|\\n).*?Content-Type: application/pdf;[^]+?filename="([^"]+)"[^]+?X-Attachment-Id: [^\\r\\n]+(?:\\r\\n|\\r|\\n){2}([\\s\\S]*?)(?=--${boundary}|--$)`, 'gi');
 
-      const attachments = [];
-      let match;
+        const attachments = [];
+        let match;
 
-      while ((match = boundaryRegex.exec(email)) !== null) {
-        const [, filename, base64Content] = match;
-        // Trimming and removing any extra headers before the Base64 content starts
-        const cleanBase64 = base64Content.replace(/^[\\r\\n]+/, '').trim();
-        attachments.push({
-          filename,
-          base64Content: cleanBase64
-        });
+        while ((match = boundaryRegex.exec(email)) !== null) {
+          const [, filename, base64Content] = match;
+          // Trimming and removing any extra headers before the Base64 content starts
+          const cleanBase64 = base64Content.replace(/^[\\r\\n]+/, '').trim();
+          attachments.push({
+            filename,
+            base64Content: cleanBase64
+          });
+        }
+
+        return attachments;
       }
 
-      return attachments;
-    }
+      let attachments
+      if (fromAddress.includes("@outlook.com")) {
+        // Regular expression to match email addresses
+        const emailRegex = /[\w.-]+@[\w.-]+\.\w+/g;
 
-    let attachments
-    if(fromAddress.includes("@outlook.com")){
-      // Regular expression to match email addresses
-const emailRegex = /[\w.-]+@[\w.-]+\.\w+/g;
+        // Find all matches in the text
+        const toTheSender = toAddress.match(emailRegex);
+        toAddress = toTheSender[0]
+        console.log("toaddress", toTheSender[0])
 
-// Find all matches in the text
- const toTheSender = toAddress.match(emailRegex);
- toAddress=toTheSender[0]
-console.log("toaddress",toTheSender[0])
+        const FromTheSender = fromAddress.match(emailRegex);
+        fromAddress = FromTheSender[0]
+        console.log("toaddress", FromTheSender[0])
 
- const FromTheSender = fromAddress.match(emailRegex);
-fromAddress=FromTheSender[0]
-console.log("toaddress",FromTheSender[0])
 
- 
-      // Extract PDF base64 strings
-      attachments = extractPDFs(bufferDataString);
-    }else{
-      attachments = extractPDFAttachments(bufferDataString);
-    }
-    toAddress = toAddress.replace('client.', '')
+        // Extract PDF base64 strings
+        attachments = extractPDFs(bufferDataString);
+      } else {
+        attachments = extractPDFAttachments(bufferDataString);
+      }
+      toAddress = toAddress.replace('client.', '')
       // Prepare response or further processing
       let response = {
         to: toAddress,
@@ -554,7 +558,13 @@ exports.searchLabReportsByFilters = onRequest(async (req, res) => {
 
       // Determine the appropriate email based on user role
       let email_to = userDecode.user.isEmployee ? userDecode.user.invitedBy : userDecode.user.user_email;
-
+      // Find the user in the database by their email.
+      const user = await users.findOne({ where: { user_email: email_to } });
+      console.log("user", user)
+      if (user.dataValues.isArchived == true) {
+        // If no user is found with the provided email, return a 404 Not Found status.
+        return res.status(400).send({ message: 'User is archived' });
+      }
       // Extract filters from the request body
       const { protocolId, subjectId, lab_name, timePoint } = req.body;
       let labNameArray = lab_name ? JSON.parse(lab_name) : []; // Parse the lab_name JSON if provided
@@ -591,6 +601,12 @@ exports.searchLabReportsByFilters = onRequest(async (req, res) => {
           });
         }));
         labReports = labReports.flat(); // Flatten the array of lab reports
+        const pdfResults = await Promise.all(labReports.map(async (report) => {
+          return await pdf_email.findAll({
+            where: { id: report.pdfEmailIdfk }
+          });
+        }));
+        pdfPath = pdfResults.flat()
       } else {
         // If no lab names are provided, fetch all reports that match the other conditions
         labReports = await lab_report.findAll({
@@ -607,14 +623,26 @@ exports.searchLabReportsByFilters = onRequest(async (req, res) => {
             }]
           }]
         });
+        const pdfResults = await Promise.all(labReports.map(async (report) => {
+          return await pdf_email.findAll({
+            where: { id: report.pdfEmailIdfk }
+          });
+        }));
+        pdfPath = pdfResults.flat()
       }
+      const pdfPathMap = pdfPath.reduce((acc, pdf) => ({
+        ...acc,
+        [pdf.id]: pdf.dataValues.pdfPath  // Directly access the pdfPath from dataValues
+      }), {});
+      console.log("pathsss",pdfPathMap)
 
       // Helper function to transform and de-duplicate lab reports data
-      function transformData(reports) {
+      function transformData(reports,pdfPathMap) {
         const uniqueReportsMap = new Map();
 
         reports.forEach(report => {
           if (report.labreport_data && report.labreport_data.length > 0) {
+            console.log("report",report)
             report.labreport_data.forEach(data => {
               // Create a unique key for each report entry to avoid duplicates
               const uniqueKey = `${report.protocolId}-${report.investigator}-${report.subjectId}-${report.dateOfCollection}-${report.timePoint}-${report.email_to}-${report.time_of_collection}-${data.lab_name}-${data.value}-${data.refRangeData.refValue}`;
@@ -624,6 +652,7 @@ exports.searchLabReportsByFilters = onRequest(async (req, res) => {
                 const combinedData = {
                   ...report.dataValues,
                   ...data.dataValues,
+                  pdfpath: pdfPathMap[report.pdfEmailIdfk],
                   labreport_data: undefined // Remove the nested labreport_data array
                 };
                 uniqueReportsMap.set(uniqueKey, combinedData);
@@ -631,7 +660,7 @@ exports.searchLabReportsByFilters = onRequest(async (req, res) => {
             });
           } else {
             // If no labreport_data, store the report data directly
-            const reportData = { ...report.dataValues };
+            const reportData = { ...report.dataValues ,pdfpath: pdfPathMap[report.id],};
             const uniqueKey = `${report.protocolId}-${report.investigator}-${report.subjectId}-${report.dateOfCollection}-${report.timePoint}-${report.email_to}-${report.time_of_collection}`;
             if (!uniqueReportsMap.has(uniqueKey)) {
               uniqueReportsMap.set(uniqueKey, reportData);
@@ -657,7 +686,8 @@ exports.searchLabReportsByFilters = onRequest(async (req, res) => {
       });
 
       // Transform and paginate the reports
-      const transformedReports = transformData(labReports);
+      const transformedReports = transformData(labReports,pdfPathMap);
+      
       const startIndex = (page - 1) * pageSize;
       const paginatedLabReports = transformedReports.slice(startIndex, startIndex + pageSize);
 
@@ -706,7 +736,12 @@ exports.getPlotValuesByFilters = onRequest(async (req, res) => {
 
       // Determine the appropriate email to filter lab reports based on user role
       let email_to = userDecode.user.isEmployee ? userDecode.user.invitedBy : userDecode.user.user_email;
-
+      const user = await users.findOne({ where: { user_email: email_to } });
+      console.log("user", user)
+      if (user.dataValues.isArchived == true) {
+        // If no user is found with the provided email, return a 404 Not Found status.
+        return res.status(400).send({ message: 'User is archived' });
+      }
       // Extract the relevant filter criteria from the request body
       const { protocolId, subjectId, lab_name } = req.body;
       let labNameArray = lab_name ? JSON.parse(lab_name) : []; // Parse lab names if provided
@@ -793,7 +828,12 @@ exports.getLabDataOnTimePoint = onRequest(async (req, res) => {
 
       // Determine the appropriate email to filter lab reports based on user role
       let email_to = userDecode.user.isEmployee ? userDecode.user.invitedBy : userDecode.user.user_email;
-
+      const user = await users.findOne({ where: { user_email: email_to } });
+      console.log("user", user)
+      if (user.dataValues.isArchived == true) {
+        // If no user is found with the provided email, return a 404 Not Found status.
+        return res.status(400).send({ message: 'User is archived' });
+      }
       // Extract the relevant filter criteria from the request body
       const { protocolId, subjectId, lab_name, timePoint } = req.body;
       let labNameArray = lab_name ? JSON.parse(lab_name) : []; // Parse lab names if provided
@@ -939,7 +979,12 @@ exports.getLabReportNamesByEmail = onRequest(async (req, res) => {
       if (!email_to) {
         return res.status(400).send("Email parameter is required."); // Check if email is parsed correctly
       }
-
+      const user = await users.findOne({ where: { user_email: email_to } });
+      console.log("user", user)
+      if (user.dataValues.isArchived == true) {
+        // If no user is found with the provided email, return a 404 Not Found status.
+        return res.status(400).send({ message: 'User is archived' });
+      }
       const { protocolId, subjectId } = req.body; // Extract the protocolId and subjectId from the request body
 
       // Perform a database query to fetch lab reports matching the specified criteria
@@ -1049,13 +1094,13 @@ exports.clientInvite = onRequest(async (req, res) => {
         return res.status(400).send('Client email is required.');
       }
       const existingAdmin = await admin.findOne({ where: { user_email: clientEmail } });
-      if(existingAdmin){
+      if (existingAdmin) {
         // If an invitation already exists, return a 400 Bad Request status with a message
         return res.status(400).json({ message: "This is an Admin Account" });
       }
       // Remove the 'client.' subdomain from the email if it exists
-    //  const inviteClientEmail = clientEmail.replace('client.', '');
-    //   console.log("new email",inviteClientEmail)
+      //  const inviteClientEmail = clientEmail.replace('client.', '');
+      //   console.log("new email",inviteClientEmail)
       // Check if an invitation has already been sent to this email
       const existingUser = await users.findOne({ where: { user_email: clientEmail } });
       if (existingUser) {
@@ -1142,7 +1187,7 @@ exports.employeeInvite = onRequest(async (req, res) => {
         <p><a href="${invitationUrl}" style="color: #1a73e8; text-decoration: none;">Set Your Password</a></p>
         <img src="https://storage.googleapis.com/gpdata01/image/image-3.png" style="padding-top: 20px;" width="300px"/>
       </div>`,
-}
+      }
 
       // Send the email using SendGrid's mail service
       await sgMail.send(msg);
@@ -1256,7 +1301,7 @@ exports.clientLogin = onRequest(async (req, res) => {
       }
 
       // If authentication is successful, generate a JSON Web Token (JWT) for the user.
-      const token = jwt.sign({ user_id: user.id, email: user.user_email,user , invitedBy:user.invitedBy, isEmployee:user.isEmployee }, "your_secret_key", { expiresIn: "1d" });
+      const token = jwt.sign({ user_id: user.id, email: user.user_email, user, invitedBy: user.invitedBy, isEmployee: user.isEmployee }, "your_secret_key", { expiresIn: "1d" });
 
       // Return the token and a success message in the response.
       res.json({ message: "Login successful", token });
@@ -1292,7 +1337,12 @@ exports.getClientReports = onRequest(async (req, res) => {
 
       console.log("user", userDecode.user);
       let email_to = userDecode.user.isEmployee ? userDecode.user.invitedBy : userDecode.user.user_email;
-
+      const user = await users.findOne({ where: { user_email: email_to } });
+      console.log("user", user)
+      if (user.dataValues.isArchived == true) {
+        // If no user is found with the provided email, return a 404 Not Found status.
+        return res.status(400).send({ message: 'User is archived' });
+      }
       // Pagination setup
       const page = parseInt(req.query.page) || 1;
       const pageSize = parseInt(req.query.pageSize) || 10;
@@ -1381,10 +1431,15 @@ exports.getProtocolIds = onRequest(async (req, res) => {
           }
         });
       });
-      console.log("user",userDecode)
+      console.log("user", userDecode)
       // Determine the appropriate email to query lab reports based on user role
       const email_to = userDecode.user.isEmployee ? userDecode.user.invitedBy : userDecode.user.user_email;
-
+      const user = await users.findOne({ where: { user_email: email_to } });
+      console.log("user", user)
+      if (user.dataValues.isArchived == true) {
+        // If no user is found with the provided email, return a 404 Not Found status.
+        return res.status(400).send({ message: 'User is archived' });
+      }
       // Fetch distinct protocol IDs associated with the user's email from the lab reports
       const labReports = await lab_report.findAll({
         where: { email_to },
@@ -1435,7 +1490,12 @@ exports.getSubjectIds = onRequest(async (req, res) => {
 
       // Determine the appropriate email to filter lab reports based on whether the user is an employee
       const email_to = userDecode.user.isEmployee ? userDecode.user.invitedBy : userDecode.user.user_email;
-
+      const user = await users.findOne({ where: { user_email: email_to } });
+      console.log("user", user)
+      if (user.dataValues.isArchived == true) {
+        // If no user is found with the provided email, return a 404 Not Found status.
+        return res.status(400).send({ message: 'User is archived' });
+      }
       const { protocolId } = req.body; // Extract protocolId from the request body
 
       // Validate that the protocolId is provided
@@ -1632,7 +1692,7 @@ exports.getEmployeeByEmail = onRequest(async (req, res) => {
         });
 
         // Ensure that a single user result is also returned as an array for consistency.
-        result = userByEmail ? [userByEmail] : []; 
+        result = userByEmail ? [userByEmail] : [];
       }
 
       // If no result is found (neither invited users nor the user themselves), return a 404 Not Found.
@@ -1688,29 +1748,29 @@ exports.deleteEmployee = onRequest(async (req, res) => {
   })
 });
 
-exports.forgotPassword = onRequest(async(req,res)=>{
-  cors(req,res,async()=>{
+exports.forgotPassword = onRequest(async (req, res) => {
+  cors(req, res, async () => {
     const { user_email } = req.body;
     if (!user_email) {
       return res.status(400).send('User email is required.');
     }
-  
+
     try {
       const user = await users.findOne({ where: { user_email: user_email } });
       if (!user) {
         return res.status(404).send('User not found.');
       }
-  
+
       // Generate a new token and update the user record
       const newToken = uuidv4();
       user.token = newToken;
       await user.save();
-         // Remove the 'client.' subdomain from the email if it exists
-    //  const inviteClientEmail = user_email.replace('client.', '');
-    //  console.log("new email",inviteClientEmail)
+      // Remove the 'client.' subdomain from the email if it exists
+      //  const inviteClientEmail = user_email.replace('client.', '');
+      //  console.log("new email",inviteClientEmail)
       // Construct the password reset URL
       const resetUrl = `https://gpdataservices.com/reset-password/${newToken}`;
-  
+
       // Email setup for password reset
       const msg = {
         to: user_email, // Recipient's email after modification
@@ -1727,7 +1787,7 @@ exports.forgotPassword = onRequest(async(req,res)=>{
                 <img src="https://storage.googleapis.com/gpdata01/image/image-3.png" style="padding-top: 20px;" width="300px"/>
               </div>`,
       };
-  
+
       // Send the email
       await sgMail.send(msg);
       console.log('Password reset email sent successfully');
@@ -1742,7 +1802,7 @@ exports.forgotPassword = onRequest(async(req,res)=>{
 exports.onlyLabNameSearch = onRequest({
   timeoutSeconds: 3600, // Set the function timeout to 1 hour
   memory: "1GiB", // Allocate 1 GiB of memory to the function
-},async(req, res) => {
+}, async (req, res) => {
   cors(req, res, async () => {
     // Retrieve the authorization header from the request
     const authHeader = req.headers['authorization'];
@@ -1767,11 +1827,16 @@ exports.onlyLabNameSearch = onRequest({
 
       // Determine the appropriate email based on user role
       const email_to = userDecode.user.isEmployee ? userDecode.user.invitedBy : userDecode.user.user_email;
-
+      const user = await users.findOne({ where: { user_email: email_to } });
+      console.log("user", user)
+      if (user.dataValues.isArchived == true) {
+        // If no user is found with the provided email, return a 404 Not Found status.
+        return res.status(400).send({ message: 'User is archived' });
+      }
       // Extract and parse the lab_name JSON-encoded string from the request body
       const { lab_name_json, minValue, maxValue } = req.body;
       let lab_names = JSON.parse(lab_name_json);
-      console.log("labnames",lab_names)
+      console.log("labnames", lab_names)
       // Construct value condition based on minValue and maxValue
       const valueCondition = {};
       if (minValue !== undefined && maxValue !== undefined) {
@@ -1782,9 +1847,9 @@ exports.onlyLabNameSearch = onRequest({
         valueCondition.value = { [Sequelize.Op.lte]: maxValue };
       }
 
-       // Set up pagination parameters
-       const page = parseInt(req.query.page) || 1;
-       const pageSize = parseInt(req.query.pageSize) || 10;
+      // Set up pagination parameters
+      const page = parseInt(req.query.page) || 1;
+      const pageSize = parseInt(req.query.pageSize) || 10;
       let labReports = []
       let pdfPath
       // Perform the query to fetch all reports that match the email_to and lab_name conditions
@@ -1807,58 +1872,58 @@ exports.onlyLabNameSearch = onRequest({
           });
         }));
         labReports = results.flat(); // Flatten the array of results
-         // Fetch PdfEmail paths for each LabReport
-      const pdfResults = await Promise.all(labReports.map(async (report) => {
-        return  await pdf_email.findAll({
-          where: { id: report.pdfEmailIdfk }
-        });
-      }));
-      pdfPath = pdfResults.flat()
+        // Fetch PdfEmail paths for each LabReport
+        const pdfResults = await Promise.all(labReports.map(async (report) => {
+          return await pdf_email.findAll({
+            where: { id: report.pdfEmailIdfk }
+          });
+        }));
+        pdfPath = pdfResults.flat()
       }
       const pdfPathMap = pdfPath.reduce((acc, pdf) => ({
         ...acc,
         [pdf.id]: pdf.dataValues.pdfPath  // Directly access the pdfPath from dataValues
       }), {});
-        // Helper function to transform and de-duplicate lab reports data
-        function transformData(reports, pdfPathMap) {
-          console.log("reports", reports);
-          console.log("paths", pdfPathMap);
-          const flattenedReports = [];
-          reports.forEach(report => {
-            report.labreport_data.forEach(data => {  // Ensure that you're accessing the right property for lab report data
-              const combinedReport = {
-                id: data.id,
-                pdfEmailIdfk: report.pdfEmailIdfk,
-                protocolId: report.protocolId,
-                investigator: report.investigator,
-                subjectId: report.subjectId,
-                dateOfCollection: report.dateOfCollection,
-                timePoint: report.timePoint,
-                email_to: report.email_to,
-                time_of_collection: report.time_of_collection,
-                createdAt: data.createdAt,
-                updatedAt: data.updatedAt,
-                labReportFk: data.labReportFk,  // Typo corrected from labReoprtFk to labReportFk
-                refRangeFk: data.refRangeFk,
-                lab_name: data.lab_name,
-                value: data.value,
-                isPending: data.isPending,
-                refValue: data.refRangeData ? data.refRangeData.refValue : 'N/A',
-                pdfPath: pdfPathMap[report.pdfEmailIdfk]  // Fetching pdfPath from the map using pdfEmailIdfk
-              };
-              flattenedReports.push(combinedReport);
-            });
+      // Helper function to transform and de-duplicate lab reports data
+      function transformData(reports, pdfPathMap) {
+        console.log("reports", reports);
+        console.log("paths", pdfPathMap);
+        const flattenedReports = [];
+        reports.forEach(report => {
+          report.labreport_data.forEach(data => {  // Ensure that you're accessing the right property for lab report data
+            const combinedReport = {
+              id: data.id,
+              pdfEmailIdfk: report.pdfEmailIdfk,
+              protocolId: report.protocolId,
+              investigator: report.investigator,
+              subjectId: report.subjectId,
+              dateOfCollection: report.dateOfCollection,
+              timePoint: report.timePoint,
+              email_to: report.email_to,
+              time_of_collection: report.time_of_collection,
+              createdAt: data.createdAt,
+              updatedAt: data.updatedAt,
+              labReportFk: data.labReportFk,  // Typo corrected from labReoprtFk to labReportFk
+              refRangeFk: data.refRangeFk,
+              lab_name: data.lab_name,
+              value: data.value,
+              isPending: data.isPending,
+              refValue: data.refRangeData ? data.refRangeData.refValue : 'N/A',
+              pdfPath: pdfPathMap[report.pdfEmailIdfk]  // Fetching pdfPath from the map using pdfEmailIdfk
+            };
+            flattenedReports.push(combinedReport);
           });
-          return flattenedReports;
-        }
-        
-  
-        // Transform and paginate the reports
-        const transformedReports = transformData(labReports,pdfPathMap);
+        });
+        return flattenedReports;
+      }
 
-        const startIndex = (page - 1) * pageSize;
-        const paginatedLabReports = transformedReports.slice(startIndex, startIndex + pageSize);
-  
+
+      // Transform and paginate the reports
+      const transformedReports = transformData(labReports, pdfPathMap);
+
+      const startIndex = (page - 1) * pageSize;
+      const paginatedLabReports = transformedReports.slice(startIndex, startIndex + pageSize);
+
 
       // Send the paginated results as the response
       return res.json({
@@ -1905,10 +1970,15 @@ exports.getLabReportNamesByEmailForSearch = onRequest(async (req, res) => {
       if (!email_to) {
         return res.status(400).send("Email parameter is required."); // Check if email is parsed correctly
       }
-
+      const user = await users.findOne({ where: { user_email: email_to } });
+      console.log("user", user)
+      if (user.dataValues.isArchived == true) {
+        // If no user is found with the provided email, return a 404 Not Found status.
+        return res.status(400).send({ message: 'User is archived' });
+      }
       // Perform a database query to fetch lab reports matching the specified criteria
       const labReports = await lab_report.findAll({
-        where: { email_to: email_to},
+        where: { email_to: email_to },
         attributes: ['id'] // Only fetch the 'id' attribute for minimal data retrieval
       });
 
@@ -1938,3 +2008,319 @@ exports.getLabReportNamesByEmailForSearch = onRequest(async (req, res) => {
     }
   });
 });
+
+exports.signPdf = onRequest(async (req, res) => {
+  cors(req, res, async () => {
+    const authHeader = req.headers['authorization'];
+    console.log("header", authHeader);  // Log the received authorization header for debugging
+    if (!authHeader) {
+      return res.sendStatus(401); // Return Unauthorized if no authorization header is present
+    }
+
+    try {
+      // Decode and verify the JWT from the authorization header asynchronously
+      const userDecode = await new Promise((resolve, reject) => {
+        jwt.verify(authHeader, 'your_secret_key', (err, user) => {
+          if (err) {
+            reject('Forbidden'); // Reject the promise if the token is invalid
+          } else {
+            resolve(user); // Resolve with the decoded user information if the token is valid
+          }
+        });
+      });
+
+      // Determine the appropriate email to filter lab reports based on user role
+      let email_to = userDecode.user.isEmployee ? userDecode.user.invitedBy : userDecode.user.user_email;
+      if (!email_to) {
+        return res.status(400).send("Email parameter is required."); // Check if email is parsed correctly
+      }
+      const user = await users.findOne({ where: { user_email: email_to } });
+      console.log("user", user)
+      if (user.dataValues.isArchived == true) {
+        // If no user is found with the provided email, return a 404 Not Found status.
+        return res.status(400).send({ message: 'User is archived' });
+      }
+      const { pdfUrl } = req.body; // Use a URL in the request body
+      console.log(`PDF URL: ${pdfUrl}`); // Debug the URL
+      const parts = pdfUrl.split('/');
+
+      // The PDF name is expected to be the last segment after the last '/'
+      const pdfName = parts[parts.length - 1];
+
+      console.log(pdfName);
+      const response = await axios.get(pdfUrl, { responseType: 'arraybuffer' });
+      const pdfBuffer = response.data;
+      const pdfDoc = await PDFDocument.load(pdfBuffer);
+      const pageCount = pdfDoc.getPageCount();
+      const fields = [];
+      for (let i = 1; i <= pageCount; i++) {
+        fields.push({
+          type: 'signature',
+          required: true,
+          fixed_width: false,
+          lock_sign_date: false,
+          x: 217,
+          y: 828,
+          page: i,
+          recipient_id: '9'
+        });
+      }
+      console.log(`The PDF has ${pageCount} pages.`);
+      console.log("pagessss", fields)
+      signwell.auth('YWNjZXNzOjFhMTFjMzhkY2RkNDZhMWZlNDZkNDIyNGM5ODM1NTBj');
+      const signUrl = await signwell.postApiV1Documents({
+        test_mode: true,
+        draft: false,
+        with_signature_page: false,
+        reminders: true,
+        apply_signing_order: false,
+        embedded_signing: false,
+        embedded_signing_notifications: false,
+        text_tags: false,
+        allow_decline: true,
+        allow_reassign: true,
+        files: [
+          {
+            name: pdfName,
+            file_url: pdfUrl
+          }
+        ],
+        recipients: [
+          {
+            send_email: false,
+            send_email_delay: 0,
+            id: '9',
+            email: 'waleedcodistan@gmail.com'
+          }
+        ],
+        fields: [
+          fields
+        ]
+      })
+      console.log("signed pdf", signUrl.data.id)
+      const signedPdf = await signedPdfs.create({ pdf_id: signUrl.data.id, pdfEmailIdfk: req.body.pdfId })
+      return res.status(200).send(`Document processed successfully ${JSON.stringify(signUrl)}`);
+    } catch (err) {
+      if (err === 'Forbidden') {
+        return res.sendStatus(403); // Forbidden status if JWT verification fails
+      }
+      if (err.response) {
+        // Log the invalid keys from the API error response
+        console.error('Invalid keys:', err.response.data.errors.invalid_keys);
+        console.error('Error message:', err.response.data.errors.message);
+        return res.status(400).send(err.response.data);
+      } else {
+        // General error handling if the response is not available
+        console.error('Error:', err);
+        return res.status(500).send("Internal server error");
+      }// Return Internal Server Error for other cases
+    }
+  });
+});
+
+exports.signWebhook = onRequest({
+  timeoutSeconds: 3600, // Set the function timeout to 1 hour
+  memory: "1GiB", // Allocate 1 GiB of memory to the function
+}, async (req, res) => {
+  cors(req, res, async () => {
+    try {
+      if (req.body && req.body.event.type === "document_completed") {
+        const data = req.body.data.object; // Assuming the object holds the required data
+        console.log("Document Data:", data);
+
+        // Ensure the uploads directory exists
+        const uploadsDir = path.join(__dirname, 'uploads');
+        if (!fs.existsSync(uploadsDir)) {
+          fs.mkdirSync(uploadsDir);
+        }
+
+        // Find the record in the signedPdfs table
+        const pdfRecord = await signedPdfs.findOne({
+          where: { pdf_id: data.id } // Adjust this if necessary
+        });
+
+        if (!pdfRecord) {
+          return res.status(404).send('Record not found');
+        }
+
+        // Retrieve the PDF URL using Signwell API
+        signwell.auth('YWNjZXNzOjFhMTFjMzhkY2RkNDZhMWZlNDZkNDIyNGM5ODM1NTBj');
+        const pdfUrlData = await signwell.getApiV1DocumentsIdCompleted_pdf({
+          url_only: 'true',
+          audit_page: 'false',
+          id: data.id
+        });
+        console.log("dataaaa", pdfUrlData)
+        const pdfUrl = pdfUrlData.data.file_url;
+        let cleanUrl = pdfUrl.split('?')[0]; // This splits the URL at the '?' and takes the first part.
+        const newData = {
+          name: data.name,
+          id: data.id  // Adjust accordingly if needed
+        };
+        console.log("new", newData)
+        // Call UploadFile function to handle PDF renaming, uploading, and database updating
+        const uploadResult = await UploadFile(cleanUrl, newData);
+
+        // Return success message
+        return res.status(200).send(`PDF processed and uploaded successfully: ${uploadResult.destination}`);
+      }
+      else {
+        res.status(400).send("Event type is not document_completed or no data found.");
+      }
+    } catch (error) {
+      console.error("Error:", error);
+      res.status(500).send(`Server error: ${error.message}`);
+    }
+  });
+})
+
+exports.archiveUser = onRequest(async (req, res) => {
+  cors(req, res, async () => { // Enable CORS to handle cross-origin requests.
+    const { email, isArchive } = req.body; // Extract email and desired access level from the request body.
+    console.log("email , isarachive", email, isArchive)
+    // Check if both email and access level are provided in the request.
+    if (!email || isArchive === undefined) {
+      // Return a 400 Bad Request status if either field is missing.
+      return res.status(400).send({ message: 'Email and archive must be provided.' });
+    }
+
+    try {
+      // Find the user in the database by their email.
+      const user = await users.findOne({ where: { user_email: email } });
+      if (!user) {
+        // If no user is found with the provided email, return a 404 Not Found status.
+        return res.status(404).send({ message: 'User not found.' });
+      }
+
+      // Update the user's access level.
+      user.isArchived = isArchive;
+      await user.save(); // Save the updated user record to the database.
+
+      // Return a success response indicating the access level has been updated.
+      return res.send({ message: 'User updated successfully.', user });
+    } catch (error) {
+      // Log any errors encountered during the process.
+      console.error('Error updating user access:', error);
+      // Return a 500 Internal Server Error status if there is a problem updating the access level.
+      return res.status(500).send({ message: 'Error updating access level.' });
+    }
+  })
+})
+
+exports.getArchiveUsers = onRequest(async (req, res) => {
+  cors(req, res, async () => {
+    try {
+      const archivedUsers = await users.findAll({
+        where: {
+          isArchived: true
+        }
+      });
+      return res.status(200).json(archivedUsers);
+    } catch (error) {
+      console.log("error", error)
+      return res.status(500).json({ error: 'An error occurred while fetching archived users', details: error.message });
+    }
+  })
+})
+
+exports.getPdfsForEmail = onRequest(async (req, res) => {
+  cors(req, res, async () => {
+    const authHeader = req.headers['authorization'];
+    console.log("header", authHeader);  // Log the received authorization header for debugging
+    if (!authHeader) {
+      return res.sendStatus(401); // Return Unauthorized if no authorization header is present
+    }
+
+    try {
+      // Decode and verify the JWT from the authorization header asynchronously
+      const userDecode = await new Promise((resolve, reject) => {
+        jwt.verify(authHeader, 'your_secret_key', (err, user) => {
+          if (err) {
+            reject('Forbidden'); // Reject the promise if the token is invalid
+          } else {
+            resolve(user); // Resolve with the decoded user information if the token is valid
+          }
+        });
+      });
+
+      // Determine the appropriate email to filter lab reports based on user role
+      let email_to = userDecode.user.isEmployee ? userDecode.user.invitedBy : userDecode.user.user_email;
+      if (!email_to) {
+        return res.status(400).send("Email parameter is required."); // Check if email is parsed correctly
+      }
+      const user = await users.findOne({ where: { user_email: email_to } });
+      console.log("user", user)
+      if (user.dataValues.isArchived == true) {
+        // If no user is found with the provided email, return a 404 Not Found status.
+        return res.status(400).send({ message: 'User is archived' });
+      }
+      // Perform a database query to fetch lab reports matching the specified criteria
+      const labReports = await pdf_email.findAll({
+        where: {
+          email_to: email_to,
+          isSigned: false
+        }
+      });;
+
+
+      return res.status(201).send(labReports); // Send the list of unique lab names as a response
+    } catch (error) {
+      if (error === 'Forbidden') {
+        return res.sendStatus(403); // Forbidden status if JWT verification fails
+      }
+      console.error('Error:', error); // Log any errors for debugging
+      return res.status(500).send("Internal server error"); // Return Internal Server Error for other cases
+    }
+  });
+})
+
+exports.getSignedPdf = onRequest(async(req,res)=>{
+  cors(req, res, async () => {
+    const authHeader = req.headers['authorization'];
+    console.log("header", authHeader);  // Log the received authorization header for debugging
+    if (!authHeader) {
+      return res.sendStatus(401); // Return Unauthorized if no authorization header is present
+    }
+
+    try {
+      // Decode and verify the JWT from the authorization header asynchronously
+      const userDecode = await new Promise((resolve, reject) => {
+        jwt.verify(authHeader, 'your_secret_key', (err, user) => {
+          if (err) {
+            reject('Forbidden'); // Reject the promise if the token is invalid
+          } else {
+            resolve(user); // Resolve with the decoded user information if the token is valid
+          }
+        });
+      });
+
+      // Determine the appropriate email to filter lab reports based on user role
+      let email_to = userDecode.user.isEmployee ? userDecode.user.invitedBy : userDecode.user.user_email;
+      if (!email_to) {
+        return res.status(400).send("Email parameter is required."); // Check if email is parsed correctly
+      }
+      const user = await users.findOne({ where: { user_email: email_to } });
+      console.log("user", user)
+      if (user.dataValues.isArchived == true) {
+        // If no user is found with the provided email, return a 404 Not Found status.
+        return res.status(400).send({ message: 'User is archived' });
+      }
+      // Perform a database query to fetch lab reports matching the specified criteria
+      const labReports = await signedPdfs.findAll({
+        where: {
+          email_to: email_to,
+          isSigned: true
+        }
+      });;
+
+
+      return res.status(201).send(labReports); // Send the list of unique lab names as a response
+    } catch (error) {
+      if (error === 'Forbidden') {
+        return res.sendStatus(403); // Forbidden status if JWT verification fails
+      }
+      console.error('Error:', error); // Log any errors for debugging
+      return res.status(500).send("Internal server error"); // Return Internal Server Error for other cases
+    }
+  });
+})
