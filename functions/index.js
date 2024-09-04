@@ -533,7 +533,7 @@ exports.searchLabReports = onRequest(async (req, res) => {
 });
 
 // This function sets up an HTTP endpoint to search for lab reports based on various filters and supports pagination.
-exports.searchLabReportsByFilters = onRequest(async (req, res) => {
+exports.searchLabReportsByFilters = onRequest(async (req, res) => {   
   cors(req, res, async () => { // Enable CORS for cross-origin requests handling
     // Retrieve the authorization header from the request
     const authHeader = req.headers['authorization'];
