@@ -10,6 +10,7 @@ const { Op, Sequelize } = require("sequelize");
 const { UplaodFile, PdfEmail, labReport, labReoprtData, MakeCsv, pdfProcessor, findAllLabData, insertOrUpdateLabReport, logoExtraction, UploadFile } = require("./helper/GpData");
 const { users, admin, pdf_email, labreport_data, lab_report, labreport_csv, ref_range_data, signedPdfs } = require("./models/index");
 const fs = require('fs');
+const sequelize = require('./config/db'); // Import the configured instance
 const { PDFDocument } = require('pdf-lib');
 const signwell = require('@api/signwell');
 const path = require('path');
@@ -2320,4 +2321,129 @@ exports.getSignedPdf = onRequest(async(req,res)=>{
       return res.status(500).send("Internal server error"); // Return Internal Server Error for other cases
     }
   });
+})
+
+exports.deleteUser = onRequest(async(req,res)=>{
+  cors(req,res,async()=>{
+    const { id } = req.query;
+
+    try {
+      // Start a transaction
+    
+        const user = await users.findOne({ where: { id }});
+        if (!user) {
+          throw new Error('User not found');
+        }
+        const userEmail = user.dataValues.user_email
+        console.log("id",userEmail)
+        const pdfEmailIds = await pdf_email.findAll({ where: {userEmailFk:id },attributes: ['id'],});
+        const emailIds = pdfEmailIds.map(email => email.dataValues.id);
+        const labReports = await lab_report.findAll({
+          where: {
+            pdfEmailIdfk: {
+              [Op.in]: emailIds
+            }
+          },
+          attributes: ['id'], // Selecting only 'id' attribute
+        });
+
+        // Extracting and logging only the IDs from the lab report records
+        const labReportIds = labReports.map(report => report.id);
+        const labReportDataRecords = await labreport_data.findAll({
+          where: {
+            labReoprtFk: {
+              [Op.in]: labReportIds
+            }
+          },
+          attributes: ['id'], // Selecting only 'id' attribute
+        });
+  
+        // Extracting and logging only the IDs from the lab report data records
+        const labReoprtDataIds = labReportDataRecords.map(data => data.id);
+        const labReportCsvRecords = await labreport_csv.findAll({
+          where: {
+            labReoprtFk: {
+              [Op.in]: labReportIds
+            }
+          },
+          attributes: ['id'], // Selecting only 'id' attribute
+        });
+  
+        // Extracting and logging only the IDs from the lab report CSV records
+        const labReportCsvIds = labReportCsvRecords.map(csv => csv.id);
+         // Start transaction
+      const result = await sequelize.transaction(async (t) => {
+        
+       // Deleting records from labreport_data
+        const deleteData = await labreport_data.destroy({
+          where: {
+            labReoprtFk: {
+              [Op.in]: labReportIds
+            }
+          },
+          transaction: t
+        });
+
+      //  Deleting records from labreport_csv
+        const deleteCsv = await labreport_csv.destroy({
+          where: {
+            labReoprtFk: {
+              [Op.in]: labReportIds
+            }
+          },
+          transaction: t
+        });
+
+      //  Deleting records from lab_report
+        const deleteLabReport = await lab_report.destroy({
+          where: {
+            pdfEmailIdfk: {
+              [Op.in]: emailIds
+            }
+          },
+          transaction: t
+        });
+
+         // Deleting records from lab_report
+         const deletePdfEmail = await pdf_email.destroy({
+          where: {
+            userEmailFk: id
+          },
+          transaction: t
+        });
+
+        const invitedUsersDeletion = await users.destroy({
+          where: {
+            invitedBy: userEmail // Assuming invitedBy is stored as a string matching the primary user's id
+          },
+          transaction: t
+        });
+
+         // Log how many invited users were deleted (optional)
+    console.log(`${invitedUsersDeletion} invited users deleted.`);
+    
+        const deleteUser = await users.destroy({
+          where: {
+            id: id
+          },
+          transaction: t
+        });
+        // return{deletePdfEmail}
+
+        return { deleteData, deleteCsv,deleteLabReport ,deletePdfEmail,invitedUsersDeletion,deleteUser};
+      });
+
+      console.log("Deletion results:", result);
+        console.log("User ID:", user.id);
+        console.log("PDF Email IDs:", emailIds);
+        console.log("Lab Report IDs:", labReportIds);
+        console.log("Lab Report Data IDs:", labReoprtDataIds);
+        console.log("Lab Report CSV IDs:", labReportCsvIds)     
+  
+      return res.status(200).send({ message: 'User and all related records have been deleted.' });
+    } catch (error) {
+      console.error('Error during deletion:', error);
+     return res.status(500).send({ error: error.message || 'Internal server error' });
+    }
+  })
 })
