@@ -311,8 +311,8 @@ exports.SendGridEmailListener = onRequest({
       } else {
         attachments = extractPDFAttachments(bufferDataString);
       }
-      toAddress = toAddress.replace('client.', '')
-      // Prepare response or further processing
+      // toAddress = toAddress.replace('client.', '')
+      // // Prepare response or further processing
       let response = {
         to: toAddress,
         from: fromAddress,
@@ -1110,33 +1110,33 @@ exports.clientInvite = onRequest(async (req, res) => {
 
       // Generate a unique token using UUID
       const token = uuidv4();
-      // Construct the invitation URL using the generated token
-      const invitationUrl = `http://gpdataservices.com/invite/${token}`;
+      // // Construct the invitation URL using the generated token
+      // const invitationUrl = `http://gpdataservices.com/invite/${token}`;
 
       // Store the new user with the token in the database for later verification
       await users.create({ user_email: clientEmail, token });
 
       // Email message setup
-      const msg = {
-        to: clientEmail, // Recipient's email after modification
-        from: 'support@gpdataservices.com', // Your verified sender email
-        subject: 'Welcome to GP Data Services!',
-        text: `Welcome to GP Data Services! We’re thrilled to have you join our community. Click the following link to set your password: ${invitationUrl}`,
-        html: `<div style="font-family: Arial, sans-serif; font-size: 16px; color: #333;">
-                <h2>Welcome to GP Data Services!</h2>
-                <p>We’re thrilled to have you join our community and can’t wait to collaborate with you. Our platform is built to supercharge your data management, providing you with powerful tools to organize, trend, and recruit based off of your lab data—all designed to elevate your research efforts.</p>
-                <p>Together, we’ll make your data work harder and smarter for you.</p>
-                <p>Know more, Achieve more, Excel more</p>
-                <p>Click the link below to set up your password and dive in. We’re here to back you up every step of the way!</p>
-                <p><a href="${invitationUrl}" style="color: #1a73e8; text-decoration: none;">Set Your Password</a></p>
-                <img src="https://storage.googleapis.com/gpdata01/image/image-3.png" style="padding-top: 20px;" width="300px"/>
-              </div>`,
-      };
+      // const msg = {
+      //   to: clientEmail, // Recipient's email after modification
+      //   from: 'support@gpdataservices.com', // Your verified sender email
+      //   subject: 'Welcome to GP Data Services!',
+      //   text: `Welcome to GP Data Services! We’re thrilled to have you join our community. Click the following link to set your password: ${invitationUrl}`,
+      //   html: `<div style="font-family: Arial, sans-serif; font-size: 16px; color: #333;">
+      //           <h2>Welcome to GP Data Services!</h2>
+      //           <p>We’re thrilled to have you join our community and can’t wait to collaborate with you. Our platform is built to supercharge your data management, providing you with powerful tools to organize, trend, and recruit based off of your lab data—all designed to elevate your research efforts.</p>
+      //           <p>Together, we’ll make your data work harder and smarter for you.</p>
+      //           <p>Know more, Achieve more, Excel more</p>
+      //           <p>Click the link below to set up your password and dive in. We’re here to back you up every step of the way!</p>
+      //           <p><a href="${invitationUrl}" style="color: #1a73e8; text-decoration: none;">Set Your Password</a></p>
+      //           <img src="https://storage.googleapis.com/gpdata01/image/image-3.png" style="padding-top: 20px;" width="300px"/>
+      //         </div>`,
+      // };
 
-      // Send the email using sgMail
-      await sgMail.send(msg);
-      console.log('Invitation email sent successfully', msg); // Log the success message and the email details
-      return res.status(200).send('Invitation email sent successfully'); // Send a 200 OK status with a success message
+      // // Send the email using sgMail
+      // await sgMail.send(msg);
+      // console.log('Invitation email sent successfully', msg); // Log the success message and the email details
+      return res.status(200).send('Client Created Successfully'); // Send a 200 OK status with a success message
     } catch (error) {
       // Log any errors that occur during the invitation process
       console.error('Error sending invitation email:', error.response ? error.response.body : error.message);
@@ -1833,53 +1833,50 @@ exports.onlyLabNameSearch = onRequest({
         // If no user is found with the provided email, return a 404 Not Found status.
         return res.status(400).send({ message: 'User is archived' });
       }
-      // Extract and parse the lab_name JSON-encoded string from the request body
-      const { lab_name_json, minValue, maxValue } = req.body;
-      let lab_names = JSON.parse(lab_name_json);
-      console.log("labnames", lab_names)
-      // Construct value condition based on minValue and maxValue
-      const valueCondition = {};
-      if (minValue !== undefined && maxValue !== undefined) {
-        valueCondition.value = { [Sequelize.Op.between]: [minValue, maxValue] };
-      } else if (minValue !== undefined) {
-        valueCondition.value = { [Sequelize.Op.gte]: minValue };
-      } else if (maxValue !== undefined) {
-        valueCondition.value = { [Sequelize.Op.lte]: maxValue };
-      }
+      let labReports = [];
+      let pdfPath = [];
 
+      await Promise.all(req.body.map(async (search) => {
+          const valueCondition = {};
+          let lab_names = JSON.parse(search.lab_name_json);
+          if (search.minValue !== undefined && search.maxValue !== undefined) {
+              valueCondition.value = { [Sequelize.Op.between]: [search.minValue, search.maxValue] };
+          } else if (search.minValue !== undefined) {
+              valueCondition.value = { [Sequelize.Op.gte]: search.minValue };
+          } else if (search.maxValue !== undefined) {
+              valueCondition.value = { [Sequelize.Op.lte]: search.maxValue };
+          }
+            const result = await lab_report.findAll({
+                  where: { email_to },
+                  include: [{
+                      model: labreport_data,
+                      as: 'labreport_data',
+                      where: { lab_name:lab_names, ...valueCondition },
+                      required: true,
+                      include: [{
+                          model: ref_range_data,
+                          as: 'refRangeData',
+                          attributes: ['refValue'],
+                          required: false
+                      }]
+                  }]
+              });
+              labReports = labReports.concat(result.flat());
+
+          // Flatten the array of results and accumulate
+      }));
+
+      // Fetch PdfEmail paths for each LabReport
+     const pdfPaths = await Promise.all(labReports.map(async (report) => {
+          return pdf_email.findAll({
+              where: { id: report.pdfEmailIdfk }
+          });
+      }));
+      pdfPath = pdfPath.concat(pdfPaths.flat());
       // Set up pagination parameters
       const page = parseInt(req.query.page) || 1;
       const pageSize = parseInt(req.query.pageSize) || 10;
-      let labReports = []
-      let pdfPath
       // Perform the query to fetch all reports that match the email_to and lab_name conditions
-      if (lab_names.length > 0) {
-        let results = await Promise.all(lab_names.map(async (name) => {
-          return await lab_report.findAll({
-            where: { email_to },
-            include: [{
-              model: labreport_data,
-              as: 'labreport_data',
-              where: { lab_name: name, ...valueCondition },
-              required: true,
-              include: [{
-                model: ref_range_data,
-                as: 'refRangeData',
-                attributes: ['refValue'],
-                required: false
-              }]
-            }]
-          });
-        }));
-        labReports = results.flat(); // Flatten the array of results
-        // Fetch PdfEmail paths for each LabReport
-        const pdfResults = await Promise.all(labReports.map(async (report) => {
-          return await pdf_email.findAll({
-            where: { id: report.pdfEmailIdfk }
-          });
-        }));
-        pdfPath = pdfResults.flat()
-      }
       const pdfPathMap = pdfPath.reduce((acc, pdf) => ({
         ...acc,
         [pdf.id]: pdf.dataValues.pdfPath  // Directly access the pdfPath from dataValues
