@@ -25,6 +25,7 @@
     "jsonwebtoken": "^9.0.2",
     "mysql2": "^3.10.0",
     "pdf-lib": "^1.17.1",
+    "pdf-to-printer": "^5.6.0",
     "sequelize": "^6.37.3",
     "sequelize-cli": "^6.6.2",
     "stream": "^0.0.2",

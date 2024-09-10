@@ -585,7 +585,13 @@ const findAllLabData = async (extractedData, email_to) => {
                       if (testData) {
                           // Store original data
                           const originalData = { ...labData.dataValues };
-
+    
+                          // Check if existing value is not empty and new value is "Pending"
+                          if (labData.value && testData.value === "Pending") {
+                              console.log("Skipping update for", labData.lab_name, "as new data is 'Pending' and old data is not empty.");
+                              continue; // Skip this iteration, thus not updating the value to "Pending"
+                          }
+    
                           // Perform update
                           await labData.update({ value: testData.value });
 

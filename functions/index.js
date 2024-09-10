@@ -216,6 +216,7 @@ exports.test = onRequest(async (req, res) => {
 exports.SendGridEmailListener = onRequest({
   timeoutSeconds: 3600, // Set the function timeout to 1 hour
   memory: "1GiB", // Allocate 1 GiB of memory to the function
+  maxInstances: 10  // Increase max instances as needed
 }, async (req, res) => {
   cors(req, res, async () => {
     try {
@@ -534,47 +535,37 @@ exports.searchLabReports = onRequest(async (req, res) => {
 });
 
 // This function sets up an HTTP endpoint to search for lab reports based on various filters and supports pagination.
-exports.searchLabReportsByFilters = onRequest(async (req, res) => {   
-  cors(req, res, async () => { // Enable CORS for cross-origin requests handling
-    // Retrieve the authorization header from the request
+exports.searchLabReportsByFilters = onRequest(async (req, res) => {
+  cors(req, res, async () => {
     const authHeader = req.headers['authorization'];
-    console.log("header", authHeader); // Log the authorization header for debugging
+    console.log("header", authHeader);
 
-    // If no authorization header is found, send a 401 Unauthorized response
     if (!authHeader) {
       return res.sendStatus(401);
     }
 
     try {
-      // Verify the JWT from the authorization header
       const userDecode = await new Promise((resolve, reject) => {
         jwt.verify(authHeader, 'your_secret_key', (err, user) => {
           if (err) {
-            reject(new Error('Forbidden')); // Reject the promise if JWT is invalid
+            reject(new Error('Forbidden'));
           } else {
-            resolve(user); // Resolve the promise with the decoded user if JWT is valid
+            resolve(user);
           }
         });
       });
 
-      // Determine the appropriate email based on user role
       let email_to = userDecode.user.isEmployee ? userDecode.user.invitedBy : userDecode.user.user_email;
-      // Find the user in the database by their email.
       const user = await users.findOne({ where: { user_email: email_to } });
       console.log("user", user)
-      if (user.dataValues.isArchived == true) {
-        // If no user is found with the provided email, return a 404 Not Found status.
+      if (user.dataValues.isArchived) {
         return res.status(400).send({ message: 'User is archived' });
       }
-      // Extract filters from the request body
+      
       const { protocolId, subjectId, lab_name, timePoint } = req.body;
-      let labNameArray = lab_name ? JSON.parse(lab_name) : []; // Parse the lab_name JSON if provided
-
-      // Set up pagination parameters
+      let labNameArray = lab_name ? JSON.parse(lab_name) : [];
       const page = parseInt(req.query.page) || 1;
       const pageSize = parseInt(req.query.pageSize) || 10;
-
-      // Build the where conditions for the Sequelize query
       const whereConditions = { email_to };
       if (protocolId) whereConditions.protocolId = protocolId;
       if (subjectId) whereConditions.subjectId = subjectId;
@@ -582,7 +573,6 @@ exports.searchLabReportsByFilters = onRequest(async (req, res) => {
 
       let labReports = [];
 
-      // If lab names are provided, fetch reports for each lab name
       if (labNameArray.length > 0) {
         labReports = await Promise.all(labNameArray.map(async (name) => {
           return await lab_report.findAll({
@@ -601,15 +591,8 @@ exports.searchLabReportsByFilters = onRequest(async (req, res) => {
             }]
           });
         }));
-        labReports = labReports.flat(); // Flatten the array of lab reports
-        const pdfResults = await Promise.all(labReports.map(async (report) => {
-          return await pdf_email.findAll({
-            where: { id: report.pdfEmailIdfk }
-          });
-        }));
-        pdfPath = pdfResults.flat()
+        labReports = labReports.flat();
       } else {
-        // If no lab names are provided, fetch all reports that match the other conditions
         labReports = await lab_report.findAll({
           where: whereConditions,
           include: [{
@@ -624,75 +607,53 @@ exports.searchLabReportsByFilters = onRequest(async (req, res) => {
             }]
           }]
         });
-        const pdfResults = await Promise.all(labReports.map(async (report) => {
-          return await pdf_email.findAll({
-            where: { id: report.pdfEmailIdfk }
-          });
-        }));
-        pdfPath = pdfResults.flat()
       }
-      const pdfPathMap = pdfPath.reduce((acc, pdf) => ({
+      const pdfResults = await Promise.all(labReports.map(async (report) => {
+        return await pdf_email.findAll({ where: { id: report.pdfEmailIdfk } });
+      }));
+      const pdfPathMap = pdfResults.flat().reduce((acc, pdf) => ({
         ...acc,
-        [pdf.id]: pdf.dataValues.pdfPath  // Directly access the pdfPath from dataValues
+        [pdf.id]: pdf.dataValues.pdfPath
       }), {});
-      console.log("pathsss",pdfPathMap)
 
-      // Helper function to transform and de-duplicate lab reports data
-      function transformData(reports,pdfPathMap) {
+      function transformData(reports, pdfPathMap) {
         const uniqueReportsMap = new Map();
 
         reports.forEach(report => {
           if (report.labreport_data && report.labreport_data.length > 0) {
-            console.log("report",report)
             report.labreport_data.forEach(data => {
-              // Create a unique key for each report entry to avoid duplicates
-              const uniqueKey = `${report.protocolId}-${report.investigator}-${report.subjectId}-${report.dateOfCollection}-${report.timePoint}-${report.email_to}-${report.time_of_collection}-${data.lab_name}-${data.value}-${data.refRangeData.refValue}`;
+              const uniqueKey = `${report.protocolId}-${report.investigator}-${report.subjectId}-${report.dateOfCollection}-${report.timePoint}-${report.email_to}-${report.time_of_collection}-${data.lab_name}`;
 
-              // If this unique key has not been seen before, store the data in the map
-              if (!uniqueReportsMap.has(uniqueKey)) {
+              let existingEntry = uniqueReportsMap.get(uniqueKey);
+              if (!existingEntry || existingEntry.value === "Pending" && data.value !== "Pending") {
                 const combinedData = {
                   ...report.dataValues,
                   ...data.dataValues,
                   pdfpath: pdfPathMap[report.pdfEmailIdfk],
-                  labreport_data: undefined // Remove the nested labreport_data array
+                  labreport_data: undefined
                 };
                 uniqueReportsMap.set(uniqueKey, combinedData);
               }
             });
-          } else {
-            // If no labreport_data, store the report data directly
-            const reportData = { ...report.dataValues ,pdfpath: pdfPathMap[report.id],};
-            const uniqueKey = `${report.protocolId}-${report.investigator}-${report.subjectId}-${report.dateOfCollection}-${report.timePoint}-${report.email_to}-${report.time_of_collection}`;
-            if (!uniqueReportsMap.has(uniqueKey)) {
-              uniqueReportsMap.set(uniqueKey, reportData);
-            }
           }
         });
 
-        // Convert the map values to an array for easy pagination
         return Array.from(uniqueReportsMap.values());
       }
-
-      // Parse dates and sort reports by the collection date in descending order
-      function parseDateString(dateStr) {
-        const [day, month, year] = dateStr.split("-");
-        const monthIndex = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'].indexOf(month);
-        return new Date(year, monthIndex, parseInt(day));
+      function parseDateString(dateString) {
+        return new Date(dateString);
       }
 
       labReports.sort((a, b) => {
         const dateA = parseDateString(a.dataValues.dateOfCollection);
         const dateB = parseDateString(b.dataValues.dateOfCollection);
-        return dateB - dateA; // Descending order
+        return dateB - dateA;
       });
 
-      // Transform and paginate the reports
-      const transformedReports = transformData(labReports,pdfPathMap);
-      
+      const transformedReports = transformData(labReports, pdfPathMap);
       const startIndex = (page - 1) * pageSize;
       const paginatedLabReports = transformedReports.slice(startIndex, startIndex + pageSize);
 
-      // Send the paginated results as the response
       return res.json({
         data: paginatedLabReports,
         pagination: {
@@ -702,52 +663,48 @@ exports.searchLabReportsByFilters = onRequest(async (req, res) => {
           pageSize
         }
       });
-    } catch (error) {
-      console.error('Error in processing:', error); // Log any errors
+    } catch ( error) {
+      console.error('Error in processing:', error);
       if (error.message === 'Forbidden') {
-        return res.sendStatus(403); // Forbidden status if JWT verification fails
+        return res.sendStatus(403);
       }
-      return res.status(500).send("Internal server error"); // Internal server error for other cases
+      return res.status(500).send("Internal server error");
     }
   });
 });
 
+
 // This function sets up an HTTP endpoint to fetch and process plot values based on specified filters.
 exports.getPlotValuesByFilters = onRequest(async (req, res) => {
-  cors(req, res, async () => { // Enable CORS to handle cross-origin requests
-    // Retrieve the authorization header from the request
+  cors(req, res, async () => {
     const authHeader = req.headers['authorization'];
-    console.log("header", authHeader); // Log the authorization header for debugging
+    console.log("header", authHeader);
 
     if (!authHeader) {
-      return res.sendStatus(401); // Return Unauthorized if no authorization header is present
+      return res.sendStatus(401);
     }
 
     try {
-      // Decode and verify the JWT from the authorization header
       const userDecode = await new Promise((resolve, reject) => {
         jwt.verify(authHeader, 'your_secret_key', (err, user) => {
           if (err) {
-            reject(new Error('Forbidden')); // Reject if the token is invalid
+            reject(new Error('Forbidden'));
           } else {
-            resolve(user); // Resolve with the decoded user information if token is valid
+            resolve(user);
           }
         });
       });
 
-      // Determine the appropriate email to filter lab reports based on user role
       let email_to = userDecode.user.isEmployee ? userDecode.user.invitedBy : userDecode.user.user_email;
       const user = await users.findOne({ where: { user_email: email_to } });
-      console.log("user", user)
+      console.log("user", user);
       if (user.dataValues.isArchived == true) {
-        // If no user is found with the provided email, return a 404 Not Found status.
         return res.status(400).send({ message: 'User is archived' });
       }
-      // Extract the relevant filter criteria from the request body
-      const { protocolId, subjectId, lab_name } = req.body;
-      let labNameArray = lab_name ? JSON.parse(lab_name) : []; // Parse lab names if provided
 
-      // Fetch lab reports based on the specified filters and included lab name
+      const { protocolId, subjectId, lab_name } = req.body;
+      let labNameArray = lab_name ? JSON.parse(lab_name) : [];
+
       let labReports = await Promise.all(labNameArray.map(async (name) => {
         return await lab_report.findAll({
           where: { protocolId: protocolId, subjectId: subjectId, email_to: email_to },
@@ -760,7 +717,6 @@ exports.getPlotValuesByFilters = onRequest(async (req, res) => {
         });
       }));
 
-      // Transform the lab report data into a simpler format for plotting
       let transformedData = labReports.flat().map(report => {
         return report.labreport_data.map(data => ({
           lab_name: data.lab_name,
@@ -768,42 +724,44 @@ exports.getPlotValuesByFilters = onRequest(async (req, res) => {
           value: data.value,
           dateOfCollection: report.dateOfCollection
         }));
-      }).flat(); // Flatten the transformed data for easy processing
+      }).flat();
 
-      // Function to remove duplicate entries from the data
       function removeDuplicates(dataArray) {
         const unique = dataArray.reduce((acc, current) => {
-          const x = acc.find(item => item.lab_name === current.lab_name && item.time_of_collection === current.time_of_collection && item.value === current.value);
-          if (!x) {
-            return acc.concat([current]); // Add non-duplicate item to the accumulator
-          } else {
-            return acc; // Skip duplicate item
+          const key = `${current.lab_name}-${current.time_of_collection}`;
+          const existing = acc.find(item => item.lab_name === current.lab_name && item.time_of_collection === current.time_of_collection);
+
+          if (!existing) {
+            acc.push(current);
+          } else if (existing.value === "Pending" && current.value !== "Pending") {
+            // Replace the existing entry with the current if the existing is "Pending" and the current is a numeric value
+            acc = acc.filter(item => !(item.lab_name === current.lab_name && item.time_of_collection === current.time_of_collection));
+            acc.push(current);
           }
+          return acc;
         }, []);
         return unique;
       }
 
-      // Deduplicate the transformed data
       const uniqueData = removeDuplicates(transformedData);
 
-      // Helper function to parse date from "DD-MMM-YYYY" format for sorting
       function parseDateString(dateStr) {
         const [day, month, year] = dateStr.split("-");
         const monthIndex = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'].indexOf(month);
         return new Date(year, monthIndex, parseInt(day));
       }
 
-      // Sort the unique data by dateOfCollection in ascending order
       uniqueData.sort((a, b) => parseDateString(a.dateOfCollection) - parseDateString(b.dateOfCollection));
 
-      // Send the sorted and unique data back in the response with status 201 Created
       return res.status(201).send(uniqueData);
     } catch (error) {
-      console.log(error); // Log any errors for debugging
-      return res.status(500).send(error); // Send Internal Server Error if there's an issue processing the request
+      console.log(error);
+      return res.status(500).send(error);
     }
   });
 });
+
+
 
 // This function sets up an HTTP endpoint to retrieve lab data filtered by specified parameters such as lab name and time point.
 exports.getLabDataOnTimePoint = onRequest(async (req, res) => {
@@ -1884,40 +1842,44 @@ exports.onlyLabNameSearch = onRequest({
       }), {});
       // Helper function to transform and de-duplicate lab reports data
       function transformData(reports, pdfPathMap) {
-        console.log("reports", reports);
-        console.log("paths", pdfPathMap);
-        const flattenedReports = [];
-        reports.forEach(report => {
-          report.labreport_data.forEach(data => {  // Ensure that you're accessing the right property for lab report data
-            const combinedReport = {
-              id: data.id,
-              pdfEmailIdfk: report.pdfEmailIdfk,
-              protocolId: report.protocolId,
-              investigator: report.investigator,
-              subjectId: report.subjectId,
-              dateOfCollection: report.dateOfCollection,
-              timePoint: report.timePoint,
-              email_to: report.email_to,
-              time_of_collection: report.time_of_collection,
-              createdAt: data.createdAt,
-              updatedAt: data.updatedAt,
-              labReportFk: data.labReportFk,  // Typo corrected from labReoprtFk to labReportFk
-              refRangeFk: data.refRangeFk,
-              lab_name: data.lab_name,
-              value: data.value,
-              isPending: data.isPending,
-              refValue: data.refRangeData ? data.refRangeData.refValue : 'N/A',
-              pdfPath: pdfPathMap[report.pdfEmailIdfk]  // Fetching pdfPath from the map using pdfEmailIdfk
-            };
-            flattenedReports.push(combinedReport);
-          });
-        });
-        return flattenedReports;
-      }
+        const uniqueReportsMap = new Map();
 
+        reports.forEach(report => {
+          if (report.labreport_data && report.labreport_data.length > 0) {
+            report.labreport_data.forEach(data => {
+              const uniqueKey = `${report.protocolId}-${report.investigator}-${report.subjectId}-${report.dateOfCollection}-${report.timePoint}-${report.email_to}-${report.time_of_collection}-${data.lab_name}`;
+
+              let existingEntry = uniqueReportsMap.get(uniqueKey);
+              if (!existingEntry || existingEntry.value === "Pending" && data.value !== "Pending") {
+                const combinedData = {
+                  ...report.dataValues,
+                  ...data.dataValues,
+                  pdfpath: pdfPathMap[report.pdfEmailIdfk],
+                  labreport_data: undefined
+                };
+                uniqueReportsMap.set(uniqueKey, combinedData);
+              }
+            });
+          }
+        });
+
+        return Array.from(uniqueReportsMap.values());
+      }
+        // Group reports by protocolId and subjectId
+        const groupedReports = labReports.reduce((acc, report) => {
+          const key = `${report.protocolId}-${report.subjectId}`;
+          if (!acc[key]) {
+              acc[key] = [];
+          }
+          acc[key].push(report);
+          return acc;
+      }, {});
+
+      // Filter groups to include only those with more than one report
+      const filteredReports = Object.values(groupedReports).filter(reports => reports.length > 1).flat();
 
       // Transform and paginate the reports
-      const transformedReports = transformData(labReports, pdfPathMap);
+      const transformedReports = transformData(filteredReports, pdfPathMap);
 
       const startIndex = (page - 1) * pageSize;
       const paginatedLabReports = transformedReports.slice(startIndex, startIndex + pageSize);
