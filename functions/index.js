@@ -555,18 +555,27 @@ exports.searchLabReportsByFilters = onRequest(async (req, res) => {
         });
       });
 
-      let email_to = userDecode.user.isEmployee ? userDecode.user.invitedBy : userDecode.user.user_email;
-      const user = await users.findOne({ where: { user_email: email_to } });
-      console.log("user", user)
-      if (user.dataValues.isArchived) {
-        return res.status(400).send({ message: 'User is archived' });
+      // Get email_to from the request body
+      let email_to = req.body.email_to;
+
+      // Ensure email_to is an array and provided
+      if (!email_to || !Array.isArray(email_to) || email_to.length === 0) {
+        return res.status(400).send("Email_to array is required.");
       }
-      
+
+      const usersFound = await users.findAll({ where: { user_email: email_to } });
+      const nonArchivedEmails = usersFound.filter(user => !user.isArchived).map(user => user.user_email);
+
+      if (nonArchivedEmails.length === 0) {
+        return res.status(400).send({ message: 'All provided users are archived' });
+      }
+
       const { protocolId, subjectId, lab_name, timePoint } = req.body;
       let labNameArray = lab_name ? JSON.parse(lab_name) : [];
       const page = parseInt(req.query.page) || 1;
       const pageSize = parseInt(req.query.pageSize) || 10;
-      const whereConditions = { email_to };
+
+      const whereConditions = { email_to: { [Sequelize.Op.in]: nonArchivedEmails } };
       if (protocolId) whereConditions.protocolId = protocolId;
       if (subjectId) whereConditions.subjectId = subjectId;
       if (timePoint) whereConditions.timePoint = timePoint;
@@ -608,8 +617,9 @@ exports.searchLabReportsByFilters = onRequest(async (req, res) => {
           }]
         });
       }
+
       const pdfResults = await Promise.all(labReports.map(async (report) => {
-        return await pdf_email.findAll({ where: { id: report.pdfEmailIdfk } });
+        return pdf_email.findAll({ where: { id: report.pdfEmailIdfk } });
       }));
       const pdfPathMap = pdfResults.flat().reduce((acc, pdf) => ({
         ...acc,
@@ -622,7 +632,7 @@ exports.searchLabReportsByFilters = onRequest(async (req, res) => {
         reports.forEach(report => {
           if (report.labreport_data && report.labreport_data.length > 0) {
             report.labreport_data.forEach(data => {
-              const uniqueKey = `${report.protocolId}-${report.investigator}-${report.subjectId}-${report.dateOfCollection}-${report.timePoint}-${report.email_to}-${report.time_of_collection}-${data.lab_name}`;
+              const uniqueKey = `${report.protocolId}-${report.investigator}-${report.subjectId}-${report.dateOfCollection}-${report.timePoint}-${report.email_to}-${report.time_of_collection}-${data.lab_name}-${data.value}`;
 
               let existingEntry = uniqueReportsMap.get(uniqueKey);
               if (!existingEntry || existingEntry.value === "Pending" && data.value !== "Pending") {
@@ -640,14 +650,9 @@ exports.searchLabReportsByFilters = onRequest(async (req, res) => {
 
         return Array.from(uniqueReportsMap.values());
       }
-      function parseDateString(dateString) {
-        return new Date(dateString);
-      }
 
       labReports.sort((a, b) => {
-        const dateA = parseDateString(a.dataValues.dateOfCollection);
-        const dateB = parseDateString(b.dataValues.dateOfCollection);
-        return dateB - dateA;
+        return new Date(b.dataValues.dateOfCollection) - new Date(a.dataValues.dateOfCollection);
       });
 
       const transformedReports = transformData(labReports, pdfPathMap);
@@ -695,11 +700,23 @@ exports.getPlotValuesByFilters = onRequest(async (req, res) => {
         });
       });
 
-      let email_to = userDecode.user.isEmployee ? userDecode.user.invitedBy : userDecode.user.user_email;
-      const user = await users.findOne({ where: { user_email: email_to } });
-      console.log("user", user);
-      if (user.dataValues.isArchived == true) {
-        return res.status(400).send({ message: 'User is archived' });
+      // Get email_to from the request body
+      let email_to = req.body.email_to;
+
+      // Ensure email_to is an array and provided
+      if (!email_to || !Array.isArray(email_to) || email_to.length === 0) {
+        return res.status(400).send("Email_to array is required.");
+      }
+
+      // Find the users based on email_to and filter out archived users
+      const usersFound = await users.findAll({
+        where: { user_email: email_to }
+      });
+
+      const nonArchivedEmails = usersFound.filter(user => !user.isArchived).map(user => user.user_email);
+
+      if (nonArchivedEmails.length === 0) {
+        return res.status(400).send({ message: 'All provided users are archived' });
       }
 
       const { protocolId, subjectId, lab_name } = req.body;
@@ -707,7 +724,7 @@ exports.getPlotValuesByFilters = onRequest(async (req, res) => {
 
       let labReports = await Promise.all(labNameArray.map(async (name) => {
         return await lab_report.findAll({
-          where: { protocolId: protocolId, subjectId: subjectId, email_to: email_to },
+          where: { protocolId: protocolId, subjectId: subjectId, email_to: { [Sequelize.Op.in]: nonArchivedEmails } },
           include: [{
             model: labreport_data,
             as: 'labreport_data',
@@ -716,52 +733,49 @@ exports.getPlotValuesByFilters = onRequest(async (req, res) => {
           }]
         });
       }));
+      labReports = labReports.flat();
+      function transformData(reports) {
+        const uniqueReportsMap = new Map();
 
-      let transformedData = labReports.flat().map(report => {
-        return report.labreport_data.map(data => ({
-          lab_name: data.lab_name,
+        reports.forEach(report => {
+          if (report.labreport_data && report.labreport_data.length > 0) {
+            report.labreport_data.forEach(data => {
+              const uniqueKey = `${report.protocolId}-${report.investigator}-${report.subjectId}-${report.dateOfCollection}-${report.timePoint}-${report.email_to}-${report.time_of_collection}-${data.lab_name}-${data.value}`;
+
+              let existingEntry = uniqueReportsMap.get(uniqueKey);
+              if (!existingEntry || existingEntry.value === "Pending" && data.value !== "Pending") {
+                const combinedData = {
+                  lab_name: data.lab_name,
           time_of_collection: report.time_of_collection,
           value: data.value,
-          dateOfCollection: report.dateOfCollection
-        }));
-      }).flat();
-
-      function removeDuplicates(dataArray) {
-        const unique = dataArray.reduce((acc, current) => {
-          const key = `${current.lab_name}-${current.time_of_collection}`;
-          const existing = acc.find(item => item.lab_name === current.lab_name && item.time_of_collection === current.time_of_collection);
-
-          if (!existing) {
-            acc.push(current);
-          } else if (existing.value === "Pending" && current.value !== "Pending") {
-            // Replace the existing entry with the current if the existing is "Pending" and the current is a numeric value
-            acc = acc.filter(item => !(item.lab_name === current.lab_name && item.time_of_collection === current.time_of_collection));
-            acc.push(current);
+          dateOfCollection: report.dateOfCollection,
+          email_to:report.email_to
+                };
+                uniqueReportsMap.set(uniqueKey, combinedData);
+              }
+            });
           }
-          return acc;
-        }, []);
-        return unique;
+        });
+
+        return Array.from(uniqueReportsMap.values());
       }
 
-      const uniqueData = removeDuplicates(transformedData);
-
+      let transformedReports = transformData(labReports);
       function parseDateString(dateStr) {
         const [day, month, year] = dateStr.split("-");
         const monthIndex = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'].indexOf(month);
         return new Date(year, monthIndex, parseInt(day));
       }
 
-      uniqueData.sort((a, b) => parseDateString(a.dateOfCollection) - parseDateString(b.dateOfCollection));
+      // transformedReports.sort((a, b) => parseDateString(a.dateOfCollection) - parseDateString(b.dateOfCollection));
 
-      return res.status(201).send(uniqueData);
+      return res.status(201).send(transformedReports);
     } catch (error) {
       console.log(error);
       return res.status(500).send(error);
     }
   });
 });
-
-
 
 // This function sets up an HTTP endpoint to retrieve lab data filtered by specified parameters such as lab name and time point.
 exports.getLabDataOnTimePoint = onRequest(async (req, res) => {
@@ -933,27 +947,39 @@ exports.getLabReportNamesByEmail = onRequest(async (req, res) => {
         });
       });
 
-      // Determine the appropriate email to filter lab reports based on user role
-      let email_to = userDecode.user.isEmployee ? userDecode.user.invitedBy : userDecode.user.user_email;
-      if (!email_to) {
-        return res.status(400).send("Email parameter is required."); // Check if email is parsed correctly
+      // Get email_to from the request body
+      let email_to = req.body.email_to;
+
+      // Ensure email_to is an array and provided
+      if (!email_to || !Array.isArray(email_to) || email_to.length === 0) {
+        return res.status(400).send("Email_to array is required.");
       }
-      const user = await users.findOne({ where: { user_email: email_to } });
-      console.log("user", user)
-      if (user.dataValues.isArchived == true) {
-        // If no user is found with the provided email, return a 404 Not Found status.
-        return res.status(400).send({ message: 'User is archived' });
+
+      // Find the users based on email_to and filter out archived users
+      const usersFound = await users.findAll({
+        where: { user_email: email_to }
+      });
+
+      // Filter out archived users
+      const nonArchivedEmails = usersFound
+        .filter(user => !user.isArchived)
+        .map(user => user.user_email);
+
+      // If all users are archived, return a message indicating so
+      if (nonArchivedEmails.length === 0) {
+        return res.status(400).send({ message: 'All users are archived' });
       }
+
       const { protocolId, subjectId } = req.body; // Extract the protocolId and subjectId from the request body
 
       // Perform a database query to fetch lab reports matching the specified criteria
       const labReports = await lab_report.findAll({
-        where: { email_to: email_to, subjectId: subjectId, protocolId: protocolId },
+        where: { email_to: { [Sequelize.Op.in]: nonArchivedEmails }, subjectId: subjectId, protocolId: protocolId },
         attributes: ['id'] // Only fetch the 'id' attribute for minimal data retrieval
       });
 
       if (labReports.length === 0) {
-        return res.status(404).send("No lab reports found for the given email."); // Handle case with no matches
+        return res.status(404).send("No lab reports found for the given emails."); // Handle case with no matches
       }
 
       // Extract IDs from the lab reports to fetch corresponding lab data
@@ -978,6 +1004,7 @@ exports.getLabReportNamesByEmail = onRequest(async (req, res) => {
     }
   });
 });
+
 
 // This function sets up an HTTP endpoint to add a new admin user to the database.
 exports.addAdmin = onRequest(async (req, res) => {
@@ -1107,7 +1134,7 @@ exports.clientInvite = onRequest(async (req, res) => {
 
 // This function sets up an HTTP endpoint to send an invitation email to a potential employee.
 exports.employeeInvite = onRequest(async (req, res) => {
-  cors(req, res, async () => { // Enable CORS to handle cross-origin requests
+  cors(req, res, async () => {
     try {
       const { clientEmail, email_to } = req.body; // Extract client email and inviter email from the request body
 
@@ -1116,49 +1143,113 @@ exports.employeeInvite = onRequest(async (req, res) => {
         return res.status(400).send('user email is required.');
       }
 
-      // Check if an invitation has already been sent to this email
-      const existingUser = await users.findOne({ where: { user_email: clientEmail } });
+      // Check if the inviter (email_to) has already invited this clientEmail
+      const existingInvitation = await users.findOne({
+        where: {
+          user_email: clientEmail,
+          invitedBy: email_to
+        }
+      });
+      if(existingInvitation){
+      if (existingInvitation.token === null) {
+        // If an invitation already exists by this inviter, return a 400 Bad Request status with a message
+        return res.status(400).json({ message: `You have already invited ${clientEmail}` });
+      }}
+      const expirationPeriod = 3 * 60 * 1000; // 3 minutes in milliseconds
+const expirationDate = new Date(Date.now() + expirationPeriod);
+
+      // Check if the user was invited by someone else
+      const existingUser = await users.findOne({
+        where: {
+          user_email: clientEmail
+        }
+      });
+      
       if (existingUser) {
-        // If an invitation already exists, return a 400 Bad Request status with a message
-        return res.status(400).json({ message: "Invitation link already sent" });
+         // If invitedBy is null, it means the user was created by an admin and no invitation should be sent
+       if (existingUser.invitedBy === null) {
+        return res.status(400).json({ message: `User with email ${clientEmail} was set by an admin. Invitations cannot be sent.` });
       }
+        // If the token is empty, the user has already set their password
+        if (!existingUser.token) {
+          // Create a new user entry for this inviter (email_to), keeping the clientEmail
+          await users.create({
+            user_email: clientEmail,
+            invitedBy: email_to,
+            isEmployee: true
+          });
 
-      // Generate a unique token using UUID for the invitation link
-      const token = uuidv4();
-      // Construct the invitation URL using the generated token
-      const invitationUrl = `http://gpdataservices.com/invite/${token}`;
+          return res.status(200).json({ message: `User with email ${clientEmail} has already set their password, but they are now associated with the inviter ${email_to}.` });
+        }
+        if (new Date() < existingUser.expirationDate) {
+          // Handle expired invitation
+          return res.status(400).json({ message: `The invitation for ${clientEmail} has not expired yet.` });
+        }
+        
+        // If the token is not empty, update it with a new token and resend the invitation email
+        const newToken = uuidv4();
+        existingUser.token = newToken;
+        existingUser.expirationDate = expirationDate
+        await existingUser.save(); // Update the token in the database
 
-      // Store the new user with the token, inviter's email, and employee status in the database
-      await users.create({ user_email: clientEmail, token, invitedBy: email_to, isEmployee: true });
+        // Send the updated email with the new token
+        const invitationUrl = `http://gpdataservices.com/invite/${newToken}`;
+        const msg = {
+          to: clientEmail, // Recipient's email
+          from: 'support@gpdataservices.com', // Your verified sender email
+          subject: 'Invitation to Set Your Password',
+          text: `Please click the following link to set your password: ${invitationUrl}`, // Text version of the email
+          html: `<div style="font-family: Arial, sans-serif; font-size: 16px; color: #333;">
+            <h2>Welcome to GP Data Services!</h2>
+            <p>We’re thrilled to have you join our community and can’t wait to collaborate with you. Our platform is built to supercharge your data management, providing you with powerful tools to organize, trend, and recruit based off of your lab data—all designed to elevate your research efforts.</p>
+            <p>Together, we’ll make your data work harder and smarter for you.</p>
+            <p>Know more, Achieve more, Excel more</p>
+            <p>Click the link below to set up your password and dive in. We’re here to back you up every step of the way!</p>
+            <p><a href="${invitationUrl}" style="color: #1a73e8; text-decoration: none;">Set Your Password</a></p>
+            <img src="https://storage.googleapis.com/gpdata01/image/image-3.png" style="padding-top: 20px;" width="300px"/>
+          </div>`,
+        };
 
-      // Setup the email message content
-      const msg = {
-        to: clientEmail, // Recipient's email
-        from: 'support@gpdataservices.com', // Your verified sender email
-        subject: 'Invitation to Set Your Password',
-        text: `Please click the following link to set your password: ${invitationUrl}`, // Text version of the email
-        html: `<div style="font-family: Arial, sans-serif; font-size: 16px; color: #333;">
-        <h2>Welcome to GP Data Services!</h2>
-        <p>We’re thrilled to have you join our community and can’t wait to collaborate with you. Our platform is built to supercharge your data management, providing you with powerful tools to organize, trend, and recruit based off of your lab data—all designed to elevate your research efforts.</p>
-        <p>Together, we’ll make your data work harder and smarter for you.</p>
-        <p>Know more, Achieve more, Excel more</p>
-        <p>Click the link below to set up your password and dive in. We’re here to back you up every step of the way!</p>
-        <p><a href="${invitationUrl}" style="color: #1a73e8; text-decoration: none;">Set Your Password</a></p>
-        <img src="https://storage.googleapis.com/gpdata01/image/image-3.png" style="padding-top: 20px;" width="300px"/>
-      </div>`,
+        await sgMail.send(msg);
+        console.log('Updated invitation email sent successfully', msg);
+        return res.status(200).send('Updated invitation email sent successfully');
+      }else{
+        const newToken = uuidv4();
+        await users.create({
+          user_email: clientEmail,
+          invitedBy: email_to,
+          token:newToken,
+          expirationDate:expirationDate,
+          isEmployee: true
+        });
+          // Send the updated email with the new token
+          const invitationUrl = `http://gpdataservices.com/invite/${newToken}`;
+          const msg = {
+            to: clientEmail, // Recipient's email
+            from: 'support@gpdataservices.com', // Your verified sender email
+            subject: 'Invitation to Set Your Password',
+            text: `Please click the following link to set your password: ${invitationUrl}`, // Text version of the email
+            html: `<div style="font-family: Arial, sans-serif; font-size: 16px; color: #333;">
+              <h2>Welcome to GP Data Services!</h2>
+              <p>We’re thrilled to have you join our community and can’t wait to collaborate with you. Our platform is built to supercharge your data management, providing you with powerful tools to organize, trend, and recruit based off of your lab data—all designed to elevate your research efforts.</p>
+              <p>Together, we’ll make your data work harder and smarter for you.</p>
+              <p>Know more, Achieve more, Excel more</p>
+              <p>Click the link below to set up your password and dive in. We’re here to back you up every step of the way!</p>
+              <p><a href="${invitationUrl}" style="color: #1a73e8; text-decoration: none;">Set Your Password</a></p>
+              <img src="https://storage.googleapis.com/gpdata01/image/image-3.png" style="padding-top: 20px;" width="300px"/>
+            </div>`,
+          };
+  
+          await sgMail.send(msg);
+          console.log(' invitation email sent successfully', msg);
+          return res.status(200).send('invitation email sent successfully');
+
       }
-
-      // Send the email using SendGrid's mail service
-      await sgMail.send(msg);
-      console.log('Invitation email sent successfully', msg); // Log the successful sending of the invitation email
-      return res.status(200).send('Invitation email sent successfully'); // Send a 200 OK status with a success message
     } catch (error) {
-      // Log any errors that occur during the invitation process
-      console.error('Error sending invitation email:', error.response ? error.response.body : error.message);
-      // Return a 400 Bad Request status with the error message
-      return res.status(400).send({ error: error.message });
+      console.error('Error sending invitation email:', error);
+      return res.status(400).send({ error });
     }
-  })
+  });
 });
 
 // This function sets up an HTTP endpoint for users to send support emails directly from an application.
@@ -1390,18 +1481,34 @@ exports.getProtocolIds = onRequest(async (req, res) => {
           }
         });
       });
-      console.log("user", userDecode)
-      // Determine the appropriate email to query lab reports based on user role
-      const email_to = userDecode.user.isEmployee ? userDecode.user.invitedBy : userDecode.user.user_email;
-      const user = await users.findOne({ where: { user_email: email_to } });
-      console.log("user", user)
-      if (user.dataValues.isArchived == true) {
-        // If no user is found with the provided email, return a 404 Not Found status.
-        return res.status(400).send({ message: 'User is archived' });
+      console.log("user", userDecode);
+
+      // Get email_to from the request body
+      let email_to = req.body.email_to;
+
+      // Ensure email_to is an array and provided
+      if (!email_to || !Array.isArray(email_to) || email_to.length === 0) {
+        return res.status(400).send("Email_to array is required.");
       }
-      // Fetch distinct protocol IDs associated with the user's email from the lab reports
+
+      // Find the users based on email_to and filter out archived users
+      const usersFound = await users.findAll({
+        where: { user_email: email_to }
+      });
+
+      // Filter out archived users
+      const nonArchivedEmails = usersFound
+        .filter(user => !user.isArchived)
+        .map(user => user.user_email);
+
+      // If all users are archived, return a message indicating so
+      if (nonArchivedEmails.length === 0) {
+        return res.status(400).send({ message: 'All users are archived' });
+      }
+
+      // Fetch distinct protocol IDs associated with the non-archived emails
       const labReports = await lab_report.findAll({
-        where: { email_to },
+        where: { email_to: { [Sequelize.Op.in]: nonArchivedEmails } },
         attributes: [
           // Use Sequelize function to select distinct protocol IDs
           [Sequelize.fn('DISTINCT', Sequelize.col('protocolId')), 'protocolId']
@@ -1422,7 +1529,7 @@ exports.getProtocolIds = onRequest(async (req, res) => {
       }
       return res.status(500).json({ message: 'Internal server error', error }); // Return Internal Server Error for other cases
     }
-  })
+  });
 });
 
 
@@ -1447,14 +1554,29 @@ exports.getSubjectIds = onRequest(async (req, res) => {
         });
       });
 
-      // Determine the appropriate email to filter lab reports based on whether the user is an employee
-      const email_to = userDecode.user.isEmployee ? userDecode.user.invitedBy : userDecode.user.user_email;
-      const user = await users.findOne({ where: { user_email: email_to } });
-      console.log("user", user)
-      if (user.dataValues.isArchived == true) {
-        // If no user is found with the provided email, return a 404 Not Found status.
-        return res.status(400).send({ message: 'User is archived' });
+      // Get email_to from the request body
+      let email_to = req.body.email_to;
+
+      // Ensure email_to is an array and provided
+      if (!email_to || !Array.isArray(email_to) || email_to.length === 0) {
+        return res.status(400).send("Email_to array is required.");
       }
+
+      // Find the users based on email_to and filter out archived users
+      const usersFound = await users.findAll({
+        where: { user_email: email_to }
+      });
+
+      // Filter out archived users
+      const nonArchivedEmails = usersFound
+        .filter(user => !user.isArchived)
+        .map(user => user.user_email);
+
+      // If all users are archived, return a message indicating so
+      if (nonArchivedEmails.length === 0) {
+        return res.status(400).send({ message: 'All users are archived' });
+      }
+
       const { protocolId } = req.body; // Extract protocolId from the request body
 
       // Validate that the protocolId is provided
@@ -1462,9 +1584,12 @@ exports.getSubjectIds = onRequest(async (req, res) => {
         return res.status(400).send("Protocol ID is required."); // Return bad request if protocolId is missing
       }
 
-      // Fetch distinct subject IDs associated with the given protocol ID and user's email
+      // Fetch distinct subject IDs associated with the given protocol ID and user's email(s)
       const labReports = await lab_report.findAll({
-        where: { protocolId, email_to },
+        where: {
+          protocolId,
+          email_to: { [Sequelize.Op.in]: nonArchivedEmails } // Fetch only for non-archived emails
+        },
         attributes: [
           [Sequelize.fn('DISTINCT', Sequelize.col('subjectId')), 'subjectId'] // Use Sequelize to select distinct subject IDs
         ],
@@ -1784,62 +1909,66 @@ exports.onlyLabNameSearch = onRequest({
         });
       });
 
-      // Determine the appropriate email based on user role
-      const email_to = userDecode.user.isEmployee ? userDecode.user.invitedBy : userDecode.user.user_email;
-      const user = await users.findOne({ where: { user_email: email_to } });
-      console.log("user", user)
-      if (user.dataValues.isArchived == true) {
-        // If no user is found with the provided email, return a 404 Not Found status.
-        return res.status(400).send({ message: 'User is archived' });
-      }
+    // Get email_to from the request body
+    let email_to = req.body.email_to;
+
+    // Ensure email_to is an array and provided
+    if (!email_to || !Array.isArray(email_to) || email_to.length === 0) {
+      return res.status(400).send("Email_to array is required.");
+    }
+
+    // Find the users based on email_to and filter out archived users
+    const usersFound = await users.findAll({
+      where: { user_email: email_to }
+    });
+
+    const nonArchivedEmails = usersFound.filter(user => !user.isArchived).map(user => user.user_email);
+
+    if (nonArchivedEmails.length === 0) {
+      return res.status(400).send({ message: 'All provided users are archived' });
+    }
       let labReports = [];
       let pdfPath = [];
 
-      await Promise.all(req.body.map(async (search) => {
-          const valueCondition = {};
-          let lab_names = JSON.parse(search.lab_name_json);
-          if (search.minValue !== undefined && search.maxValue !== undefined) {
-              valueCondition.value = { [Sequelize.Op.between]: [search.minValue, search.maxValue] };
-          } else if (search.minValue !== undefined) {
-              valueCondition.value = { [Sequelize.Op.gte]: search.minValue };
-          } else if (search.maxValue !== undefined) {
-              valueCondition.value = { [Sequelize.Op.lte]: search.maxValue };
-          }
-            const result = await lab_report.findAll({
-                  where: { email_to },
-                  include: [{
-                      model: labreport_data,
-                      as: 'labreport_data',
-                      where: { lab_name:lab_names, ...valueCondition },
-                      required: true,
-                      include: [{
-                          model: ref_range_data,
-                          as: 'refRangeData',
-                          attributes: ['refValue'],
-                          required: false
-                      }]
-                  }]
-              });
-              labReports = labReports.concat(result.flat());
+      await Promise.all(req.body.search.map(async (search) => {
+        const valueCondition = {};
+        let lab_names = JSON.parse(search.lab_name_json);
+        if (search.minValue !== undefined && search.maxValue !== undefined) {
+            valueCondition.value = { [Sequelize.Op.between]: [search.minValue, search.maxValue] };
+        } else if (search.minValue !== undefined) {
+            valueCondition.value = { [Sequelize.Op.gte]: search.minValue };
+        } else if (search.maxValue !== undefined) {
+            valueCondition.value = { [Sequelize.Op.lte]: search.maxValue };
+        }
+          const result = await lab_report.findAll({
+                where: { email_to: { [Sequelize.Op.in]: nonArchivedEmails } },
+                include: [{
+                    model: labreport_data,
+                    as: 'labreport_data',
+                    where: { lab_name: lab_names, ...valueCondition },
+                    required: true,
+                    include: [{
+                        model: ref_range_data,
+                        as: 'refRangeData',
+                        attributes: ['refValue'],
+                        required: false
+                    }]
+                }]
+            });
+            labReports = labReports.concat(result.flat());
+    }));
 
-          // Flatten the array of results and accumulate
-      }));
+    const pdfPaths = await Promise.all(labReports.map(async (report) => {
+        return pdf_email.findAll({
+            where: { id: report.pdfEmailIdfk }
+        });
+    }));
+    pdfPath = pdfPath.concat(pdfPaths.flat());
 
-      // Fetch PdfEmail paths for each LabReport
-     const pdfPaths = await Promise.all(labReports.map(async (report) => {
-          return pdf_email.findAll({
-              where: { id: report.pdfEmailIdfk }
-          });
-      }));
-      pdfPath = pdfPath.concat(pdfPaths.flat());
-      // Set up pagination parameters
-      const page = parseInt(req.query.page) || 1;
-      const pageSize = parseInt(req.query.pageSize) || 10;
-      // Perform the query to fetch all reports that match the email_to and lab_name conditions
-      const pdfPathMap = pdfPath.reduce((acc, pdf) => ({
-        ...acc,
-        [pdf.id]: pdf.dataValues.pdfPath  // Directly access the pdfPath from dataValues
-      }), {});
+    const pdfPathMap = pdfPath.reduce((acc, pdf) => ({
+      ...acc,
+      [pdf.id]: pdf.dataValues.pdfPath
+    }), {});
       // Helper function to transform and de-duplicate lab reports data
       function transformData(reports, pdfPathMap) {
         const uniqueReportsMap = new Map();
@@ -1865,36 +1994,49 @@ exports.onlyLabNameSearch = onRequest({
 
         return Array.from(uniqueReportsMap.values());
       }
-        // Group reports by protocolId and subjectId
-        const groupedReports = labReports.reduce((acc, report) => {
-          const key = `${report.protocolId}-${report.subjectId}`;
-          if (!acc[key]) {
-              acc[key] = [];
-          }
-          acc[key].push(report);
-          return acc;
-      }, {});
+      if (labReports.length === 1) {
+        console.log("insideiffff")
+        const transformedReports = transformData(labReports, pdfPathMap);
+        // If only one record, send it directly
+        return res.json({
+            data: transformedReports,
+            pagination: {
+                totalItems: 1,
+                totalPages: 1,
+                currentPage: 1,
+                pageSize: 1
+            }
+        });
+    } else {
+      console.log("insdeelseeeeeeeee")
+        // More than one record, apply filtering for the same protocolId and subjectId
+        const filteredReports = labReports.reduce((acc, report) => {
+            const key = `${report.protocolId}-${report.subjectId}`;
+            if (!acc[key]) {
+                acc[key] = [];
+            }
+            acc[key].push(report);
+            return acc;
+        }, {});
 
-      // Filter groups to include only those with more than one report
-      const filteredReports = Object.values(groupedReports).filter(reports => reports.length > 1).flat();
+        const finalReports = Object.values(filteredReports).filter(reports => reports.length > 1).flat();
 
-      // Transform and paginate the reports
-      const transformedReports = transformData(filteredReports, pdfPathMap);
+        const transformedReports = transformData(finalReports, pdfPathMap);
+        const page = parseInt(req.query.page) || 1;
+        const pageSize = parseInt(req.query.pageSize) || 10;
+        const startIndex = (page - 1) * pageSize;
+        const paginatedLabReports = transformedReports.slice(startIndex, startIndex + pageSize);
 
-      const startIndex = (page - 1) * pageSize;
-      const paginatedLabReports = transformedReports.slice(startIndex, startIndex + pageSize);
-
-
-      // Send the paginated results as the response
-      return res.json({
-        data: paginatedLabReports,
-        pagination: {
-          totalItems: transformedReports.length,
-          totalPages: Math.ceil(transformedReports.length / pageSize),
-          currentPage: page,
-          pageSize
-        }
-      });
+        return res.json({
+            data: paginatedLabReports,
+            pagination: {
+                totalItems: transformedReports.length,
+                totalPages: Math.ceil(transformedReports.length / pageSize),
+                currentPage: page,
+                pageSize
+            }
+        });
+    }
     } catch (error) {
       console.error('Error in processing:', error);
       if (error.message === 'Forbidden') {
@@ -1910,40 +2052,47 @@ exports.getLabReportNamesByEmailForSearch = onRequest(async (req, res) => {
     const authHeader = req.headers['authorization'];
     console.log("header", authHeader);  // Log the received authorization header for debugging
     if (!authHeader) {
-      return res.sendStatus(401); // Return Unauthorized if no authorization header is present
+      return res.sendStatus(401); // Return Unauthorized if no authorization token is present
     }
 
     try {
-      // Decode and verify the JWT from the authorization header asynchronously
       const userDecode = await new Promise((resolve, reject) => {
         jwt.verify(authHeader, 'your_secret_key', (err, user) => {
           if (err) {
-            reject('Forbidden'); // Reject the promise if the token is invalid
+            reject(new Error('Forbidden')); // Reject the promise if the token is invalid
           } else {
             resolve(user); // Resolve with the decoded user information if the token is valid
           }
         });
       });
 
-      // Determine the appropriate email to filter lab reports based on user role
-      let email_to = userDecode.user.isEmployee ? userDecode.user.invitedBy : userDecode.user.user_email;
-      if (!email_to) {
-        return res.status(400).send("Email parameter is required."); // Check if email is parsed correctly
+      // Get email_to from the request body
+      let email_to = req.body.email_to;
+
+      // Ensure email_to is an array and provided
+      if (!email_to || !Array.isArray(email_to) || email_to.length === 0) {
+        return res.status(400).send("Email_to array is required.");
       }
-      const user = await users.findOne({ where: { user_email: email_to } });
-      console.log("user", user)
-      if (user.dataValues.isArchived == true) {
-        // If no user is found with the provided email, return a 404 Not Found status.
-        return res.status(400).send({ message: 'User is archived' });
+
+      // Find the users based on email_to and filter out archived users
+      const usersFound = await users.findAll({
+        where: { user_email: email_to }
+      });
+
+      const nonArchivedEmails = usersFound.filter(user => !user.isArchived).map(user => user.user_email);
+
+      if (nonArchivedEmails.length === 0) {
+        return res.status(400).send({ message: 'All provided users are archived' });
       }
+
       // Perform a database query to fetch lab reports matching the specified criteria
       const labReports = await lab_report.findAll({
-        where: { email_to: email_to },
+        where: { email_to: { [Sequelize.Op.in]: nonArchivedEmails } },
         attributes: ['id'] // Only fetch the 'id' attribute for minimal data retrieval
       });
 
       if (labReports.length === 0) {
-        return res.status(404).send("No lab reports found for the given email."); // Handle case with no matches
+        return res.status(404).send("No lab reports found for the given emails."); // Handle case with no matches
       }
 
       // Extract IDs from the lab reports to fetch corresponding lab data
@@ -1968,6 +2117,7 @@ exports.getLabReportNamesByEmailForSearch = onRequest(async (req, res) => {
     }
   });
 });
+
 
 exports.signPdf = onRequest(async (req, res) => {
   cors(req, res, async () => {
@@ -2014,16 +2164,39 @@ exports.signPdf = onRequest(async (req, res) => {
       const pageCount = pdfDoc.getPageCount();
       const fields = [];
       for (let i = 1; i <= pageCount; i++) {
-        fields.push({
-          type: 'signature',
-          required: true,
-          fixed_width: false,
-          lock_sign_date: false,
-          x: 217,
-          y: 828,
-          page: i,
-          recipient_id: '9'
-        });
+        // fields.push({
+        //   type: 'signature',
+        //   required: true,
+        //   fixed_width: false,
+        //   lock_sign_date: false,
+        //   x: 217,
+        //   y: 828,
+        //   page: i,
+        //   recipient_id: '9'
+        // });
+        fields.push(
+          {
+            type: 'signature',
+            required: true,
+            fixed_width: false,
+            lock_sign_date: false,
+            x: 217,  // X coordinate for signature
+            y: 828,  // Y coordinate for signature
+            page: i,
+            recipient_id: '9'
+          },
+          {
+            type: 'date',
+            required: true,
+            fixed_width: false,
+            lock_sign_date: false, // Set true if you want the date to auto-populate and lock
+            x: 590,  // Adjusted X coordinate for date box
+            y: 840,  // Same Y coordinate to align horizontally with signature
+            page: i,
+            recipient_id: '9',
+            date_format: 'MM/DD/YYYY' // Specify the format for the date
+          }
+        );
       }
       console.log(`The PDF has ${pageCount} pages.`);
       console.log("pagessss", fields)
@@ -2066,13 +2239,13 @@ exports.signPdf = onRequest(async (req, res) => {
       }
       if (err.response) {
         // Log the invalid keys from the API error response
-        console.error('Invalid keys:', err.response.data.errors.invalid_keys);
-        console.error('Error message:', err.response.data.errors.message);
+        console.error('Invalid keys:', err);
+        console.error('Error message:', err);
         return res.status(400).send(err.response.data);
       } else {
         // General error handling if the response is not available
         console.error('Error:', err);
-        return res.status(500).send("Internal server error");
+        return res.status(500).send("Internal server error",err);
       }// Return Internal Server Error for other cases
     }
   });
@@ -2110,29 +2283,31 @@ exports.signWebhook = onRequest({
           audit_page: 'false',
           id: data.id
         });
-        console.log("dataaaa", pdfUrlData)
+        console.log("PDF URL Data:", pdfUrlData)
         const pdfUrl = pdfUrlData.data.file_url;
         let cleanUrl = pdfUrl.split('?')[0]; // This splits the URL at the '?' and takes the first part.
         const newData = {
           name: data.name,
           id: data.id  // Adjust accordingly if needed
         };
-        console.log("new", newData)
+        console.log("New Data:", newData)
         // Call UploadFile function to handle PDF renaming, uploading, and database updating
         const uploadResult = await UploadFile(cleanUrl, newData);
 
         // Return success message
         return res.status(200).send(`PDF processed and uploaded successfully: ${uploadResult.destination}`);
-      }
-      else {
-        res.status(400).send("Event type is not document_completed or no data found.");
+      } else {
+        console.log("here")
+        // Return 200 OK for other event types to prevent API crashes
+        return res.status(200).send("Received non-critical event type; no action taken.");
       }
     } catch (error) {
       console.error("Error:", error);
       res.status(500).send(`Server error: ${error.message}`);
     }
   });
-})
+});
+
 
 exports.archiveUser = onRequest(async (req, res) => {
   cors(req, res, async () => { // Enable CORS to handle cross-origin requests.
@@ -2196,34 +2371,41 @@ exports.getPdfsForEmail = onRequest(async (req, res) => {
       const userDecode = await new Promise((resolve, reject) => {
         jwt.verify(authHeader, 'your_secret_key', (err, user) => {
           if (err) {
-            reject('Forbidden'); // Reject the promise if the token is invalid
+            reject(new Error('Forbidden')); // Reject the promise if the token is invalid
           } else {
             resolve(user); // Resolve with the decoded user information if the token is valid
           }
         });
       });
 
-      // Determine the appropriate email to filter lab reports based on user role
-      let email_to = userDecode.user.isEmployee ? userDecode.user.invitedBy : userDecode.user.user_email;
-      if (!email_to) {
-        return res.status(400).send("Email parameter is required."); // Check if email is parsed correctly
+      // Get email_to from the request body
+      let email_to = req.body.email_to;
+
+      // Ensure email_to is an array and provided
+      if (!email_to || !Array.isArray(email_to) || email_to.length === 0) {
+        return res.status(400).send("Email_to array is required.");
       }
-      const user = await users.findOne({ where: { user_email: email_to } });
-      console.log("user", user)
-      if (user.dataValues.isArchived == true) {
-        // If no user is found with the provided email, return a 404 Not Found status.
-        return res.status(400).send({ message: 'User is archived' });
+
+      // Find the users based on email_to and filter out archived users
+      const usersFound = await users.findAll({
+        where: { user_email: email_to }
+      });
+
+      const nonArchivedEmails = usersFound.filter(user => !user.isArchived).map(user => user.user_email);
+
+      if (nonArchivedEmails.length === 0) {
+        return res.status(400).send({ message: 'All provided users are archived' });
       }
+
       // Perform a database query to fetch lab reports matching the specified criteria
       const labReports = await pdf_email.findAll({
         where: {
-          email_to: email_to,
+          email_to: { [Sequelize.Op.in]: nonArchivedEmails },
           isSigned: false
         }
-      });;
+      });
 
-
-      return res.status(201).send(labReports); // Send the list of unique lab names as a response
+      return res.status(201).send(labReports); // Send the fetched lab reports as a response
     } catch (error) {
       if (error === 'Forbidden') {
         return res.sendStatus(403); // Forbidden status if JWT verification fails
@@ -2232,9 +2414,10 @@ exports.getPdfsForEmail = onRequest(async (req, res) => {
       return res.status(500).send("Internal server error"); // Return Internal Server Error for other cases
     }
   });
-})
+});
 
-exports.getSignedPdf = onRequest(async(req,res)=>{
+
+exports.getSignedPdf = onRequest(async(req, res) => {
   cors(req, res, async () => {
     const authHeader = req.headers['authorization'];
     console.log("header", authHeader);  // Log the received authorization header for debugging
@@ -2247,34 +2430,41 @@ exports.getSignedPdf = onRequest(async(req,res)=>{
       const userDecode = await new Promise((resolve, reject) => {
         jwt.verify(authHeader, 'your_secret_key', (err, user) => {
           if (err) {
-            reject('Forbidden'); // Reject the promise if the token is invalid
+            reject(new Error('Forbidden')); // Reject the promise if the token is invalid
           } else {
             resolve(user); // Resolve with the decoded user information if the token is valid
           }
         });
       });
 
-      // Determine the appropriate email to filter lab reports based on user role
-      let email_to = userDecode.user.isEmployee ? userDecode.user.invitedBy : userDecode.user.user_email;
-      if (!email_to) {
-        return res.status(400).send("Email parameter is required."); // Check if email is parsed correctly
+      // Get email_to from the request body
+      let email_to = req.body.email_to;
+
+      // Ensure email_to is an array and provided
+      if (!email_to || !Array.isArray(email_to) || email_to.length === 0) {
+        return res.status(400).send("Email_to array is required.");
       }
-      const user = await users.findOne({ where: { user_email: email_to } });
-      console.log("user", user)
-      if (user.dataValues.isArchived == true) {
-        // If no user is found with the provided email, return a 404 Not Found status.
-        return res.status(400).send({ message: 'User is archived' });
+
+      // Find the users based on email_to and filter out archived users
+      const usersFound = await users.findAll({
+        where: { user_email: email_to }
+      });
+
+      const nonArchivedEmails = usersFound.filter(user => !user.isArchived).map(user => user.user_email);
+
+      if (nonArchivedEmails.length === 0) {
+        return res.status(400).send({ message: 'All provided users are archived' });
       }
-      // Perform a database query to fetch lab reports matching the specified criteria
+
+      // Perform a database query to fetch signed PDFs matching the specified criteria
       const labReports = await signedPdfs.findAll({
         where: {
-          email_to: email_to,
+          email_to: { [Sequelize.Op.in]: nonArchivedEmails },
           isSigned: true
         }
-      });;
+      });
 
-
-      return res.status(201).send(labReports); // Send the list of unique lab names as a response
+      return res.status(201).send(labReports); // Send the signed PDFs as a response
     } catch (error) {
       if (error === 'Forbidden') {
         return res.sendStatus(403); // Forbidden status if JWT verification fails
@@ -2283,7 +2473,8 @@ exports.getSignedPdf = onRequest(async(req,res)=>{
       return res.status(500).send("Internal server error"); // Return Internal Server Error for other cases
     }
   });
-})
+});
+
 
 exports.deleteUser = onRequest(async(req,res)=>{
   cors(req,res,async()=>{
@@ -2407,5 +2598,61 @@ exports.deleteUser = onRequest(async(req,res)=>{
       console.error('Error during deletion:', error);
      return res.status(500).send({ error: error.message || 'Internal server error' });
     }
+  })
+})
+
+exports.getEmployeeClients = onRequest(async(req,res)=>{
+  cors(req,res,async()=>{
+    const authHeader = req.headers['authorization'];
+    console.log("header", authHeader);  // Log the received authorization header for debugging
+    if (!authHeader) {
+      return res.sendStatus(401); // Return Unauthorized if no authorization header is present
+    }
+      try {
+          // Decode and verify the JWT from the authorization header asynchronously
+      const userDecode = await new Promise((resolve, reject) => {
+        jwt.verify(authHeader, 'your_secret_key', (err, user) => {
+          if (err) {
+            reject('Forbidden'); // Reject the promise if the token is invalid
+          } else {
+            resolve(user); // Resolve with the decoded user information if the token is valid
+          }
+        });
+      });
+     const loggedInEmail = userDecode.email
+    
+        // Find the user by email
+        const user = await users.findOne({
+          where: { user_email: loggedInEmail }
+        });
+    
+        if (!user) {
+          return res.status(404).json({ message: 'User not found' });
+        }
+    
+        // Find all records where this user was invited
+        const invitations = await users.findAll({
+          where: {
+            user_email: loggedInEmail,
+            invitedBy: {
+              [Op.ne]: null // Only get records where invitedBy is not null
+            }
+          },
+          attributes: ['invitedBy'] // Only return the invitedBy field
+        });
+    
+        // If no invitations found
+        if (!invitations.length) {
+          return res.status(200).json({ message: 'No invitations found', invitedByEmails: [] });
+        }
+    
+        // Extract the list of unique invitedBy emails
+        const invitedByEmails = invitations.map(invite => invite.invitedBy);
+    
+        return res.status(200).json({ invitedByEmails });
+      } catch (error) {
+        console.error('Error fetching invited by emails:', error.message);
+        return res.status(500).json({ message: 'An error occurred', error: error.message });
+      }
   })
 })

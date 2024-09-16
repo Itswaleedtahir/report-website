@@ -40,6 +40,10 @@ module.exports = (sequelize, DataTypes) => {
         type: DataTypes.BOOLEAN,
         allowNull: false,
         defaultValue: false
+      },
+      expirationDate: { // New Date field for invitation expiration
+        type: DataTypes.DATE,
+        allowNull: true
       }
     },
     {
