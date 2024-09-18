@@ -216,7 +216,7 @@ exports.test = onRequest(async (req, res) => {
 exports.SendGridEmailListener = onRequest({
   timeoutSeconds: 3600, // Set the function timeout to 1 hour
   memory: "1GiB", // Allocate 1 GiB of memory to the function
-  maxInstances: 10  // Increase max instances as needed
+  // maxInstances: 10  // Increase max instances as needed
 }, async (req, res) => {
   cors(req, res, async () => {
     try {
@@ -1620,23 +1620,48 @@ exports.getSubjectIds = onRequest(async (req, res) => {
 exports.getInvitedClients = onRequest(async (req, res) => {
   cors(req, res, async () => { // Enable CORS to handle cross-origin requests effectively.
     try {
-      // Query the database to fetch all records where isEmployee is set to false, indicating they are clients.
+      // Step 1: Fetch all clients (non-employees)
       const invitedUsers = await users.findAll({
         where: {
-          isEmployee: false // Filter to include only clients (non-employees).
+          isEmployee: false // Filter to include only clients
         }
       });
 
-      // If the query is successful, return the list of invited clients as a JSON response.
-      return res.status(200).json(invitedUsers);
+      // Step 2: Iterate over each client and fetch their invited employees
+      const clientsWithEmployeesPromises = invitedUsers.map(async (user) => {
+        // Fetch employees invited by this client
+        const employees = await users.findAll({
+          where: {
+            invitedBy: user.user_email,
+            isEmployee: true
+          },
+          attributes: ['user_email'] // Only fetch the employee's email
+        });
+
+        // Extract employee emails
+        const employeeEmails = employees.map(emp => emp.user_email);
+
+        // Add the employee emails to the client object
+        const clientData = user.toJSON(); // Convert Sequelize model instance to plain object
+        clientData.employeesInvited = employeeEmails;
+
+        return clientData;
+      });
+
+      // Wait for all client-employee mappings to complete
+      const clientsWithEmployees = await Promise.all(clientsWithEmployeesPromises);
+
+      // Step 3: Return the modified list of clients as a JSON response
+      return res.status(200).json(clientsWithEmployees);
     } catch (error) {
       // Log any errors that occur during the fetching process to the console for troubleshooting.
       console.error("Error fetching users data:", error);
       // Return a 500 Internal Server Error status if there is an issue with the database query.
       return res.status(500).send("Error fetching users data.");
     }
-  })
+  });
 });
+
 
 // This function sets up an HTTP endpoint to retrieve all users marked as employees, optionally filtered by the inviter's email.
 exports.getInvitedEmployees = onRequest(async (req, res) => {
