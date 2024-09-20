@@ -2375,7 +2375,29 @@ exports.getArchiveUsers = onRequest(async (req, res) => {
           isArchived: true
         }
       });
-      return res.status(200).json(archivedUsers);
+      const clientsWithEmployeesPromises = archivedUsers.map(async (user) => {
+        // Fetch employees invited by this client
+        const employees = await users.findAll({
+          where: {
+            invitedBy: user.user_email,
+            isEmployee: true
+          },
+          attributes: ['user_email'] // Only fetch the employee's email
+        });
+
+        // Extract employee emails
+        const employeeEmails = employees.map(emp => emp.user_email);
+
+        // Add the employee emails to the client object
+        const clientData = user.toJSON(); // Convert Sequelize model instance to plain object
+        clientData.employeesInvited = employeeEmails;
+
+        return clientData;
+      });
+
+      // Wait for all client-employee mappings to complete
+      const clientsWithEmployees = await Promise.all(clientsWithEmployeesPromises);
+      return res.status(200).json(clientsWithEmployees);
     } catch (error) {
       console.log("error", error)
       return res.status(500).json({ error: 'An error occurred while fetching archived users', details: error.message });
