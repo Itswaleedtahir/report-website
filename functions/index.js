@@ -424,13 +424,13 @@ exports.SendGridEmailListener = onRequest({
           const { pdfEmailId } = await PdfEmail(DateReceivedEmail, pdfname, destination, toAddress);
 
           //Checking if data is repeating
-          await findAllLabData(extractedData, toAddress)
+          await findAllLabData(extractedData, toAddress,destination)
 
           //Updating the data if already exist
           const { message, datamade } = await insertOrUpdateLabReport(extractedData, toAddress)
           console.log("message", datamade)
           if (message === 'Add') {
-            const test = await findAllLabData(datamade, toAddress)
+            const test = await findAllLabData(datamade, toAddress,destination)
             const { message } = await insertOrUpdateLabReport(datamade, toAddress)
             console.log("hereeee", message)
             if (message === 'Add') {
@@ -632,7 +632,7 @@ exports.searchLabReportsByFilters = onRequest(async (req, res) => {
         reports.forEach(report => {
           if (report.labreport_data && report.labreport_data.length > 0) {
             report.labreport_data.forEach(data => {
-              const uniqueKey = `${report.protocolId}-${report.investigator}-${report.subjectId}-${report.dateOfCollection}-${report.timePoint}-${report.email_to}-${report.time_of_collection}-${data.lab_name}-${data.value}`;
+              const uniqueKey = `${report.protocolId}-${report.investigator}-${report.subjectId}-${report.dateOfCollection}-${report.timePoint}-${report.email_to}-${report.time_of_collection}-${data.lab_name}`;
 
               let existingEntry = uniqueReportsMap.get(uniqueKey);
               if (!existingEntry || existingEntry.value === "Pending" && data.value !== "Pending") {
@@ -740,7 +740,7 @@ exports.getPlotValuesByFilters = onRequest(async (req, res) => {
         reports.forEach(report => {
           if (report.labreport_data && report.labreport_data.length > 0) {
             report.labreport_data.forEach(data => {
-              const uniqueKey = `${report.protocolId}-${report.investigator}-${report.subjectId}-${report.dateOfCollection}-${report.timePoint}-${report.email_to}-${report.time_of_collection}-${data.lab_name}-${data.value}`;
+              const uniqueKey = `${report.protocolId}-${report.investigator}-${report.subjectId}-${report.dateOfCollection}-${report.timePoint}-${report.email_to}-${report.time_of_collection}-${data.lab_name}`;
 
               let existingEntry = uniqueReportsMap.get(uniqueKey);
               if (!existingEntry || existingEntry.value === "Pending" && data.value !== "Pending") {
@@ -1748,6 +1748,20 @@ exports.getClientByEmail = onRequest(async (req, res) => {
         }
       });
 
+      const employees = await users.findAll({
+        where: {
+          invitedBy: user.user_email,
+          isEmployee: true
+        },
+        attributes: ['user_email'] // Only fetch the employee's email
+      });
+      // Extract employee emails
+      const employeeEmails = employees.map(emp => emp.user_email);
+
+      // Add the employee emails to the client object
+      const clientData = user.toJSON(); // Convert Sequelize model instance to plain object
+      clientData.employeesInvited = employeeEmails;
+
       // Check if the user was found.
       if (!user) {
         // If no user is found, return a 404 Not Found status.
@@ -1755,7 +1769,7 @@ exports.getClientByEmail = onRequest(async (req, res) => {
       }
 
       // If the user is found, return the user details with a 200 OK status.
-      res.status(200).send([user]);
+     return res.status(200).send([clientData]);
     } catch (error) {
       // Log the error if there is an issue retrieving the user.
       console.error('Failed to retrieve user:', error);

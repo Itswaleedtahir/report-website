@@ -4,7 +4,8 @@ const fs = require('fs');
 const path = require('path')
 const { Parser } = require('json2csv');
 const { Storage } = require('@google-cloud/storage');
-const {users,pdf_email,labreport_data ,lab_report,labreport_csv,ref_range_data,signedPdfs} = require("../models/index");
+const { users, pdf_email, labreport_data, lab_report, labreport_csv, ref_range_data, signedPdfs } = require("../models/index");
+const { where } = require('sequelize');
 
 // Create the credentials object from environment variables
 const googleCredentials = {
@@ -77,7 +78,7 @@ const UplaodFile = async (pdfPath, data) => {
     });
 
     console.log('File uploaded to Google Cloud Storage:', `https://storage.googleapis.com/${bucketName}/${destination}`);
-    
+
     // Optionally delete the local file after successful upload.
     fs.unlink(pdfPath, (err) => {
       if (err) {
@@ -95,7 +96,7 @@ const UplaodFile = async (pdfPath, data) => {
 };
 
 const UploadFile = async (pdfUrl, data) => {
-  console.log("insdie uplaod" , pdfUrl,data)
+  console.log("insdie uplaod", pdfUrl, data)
   const newName = data.name;
 
   // Temporarily download the PDF to a local path
@@ -129,20 +130,22 @@ const UploadFile = async (pdfUrl, data) => {
     // Update the record in the database
     const pdfRecord = await signedPdfs.findOne({ where: { pdf_id: data.id } });
     const pdfEmailId = pdfRecord.dataValues.pdfEmailIdfk
-    console.log("record",pdfRecord.dataValues.pdfEmailIdfk)
-    const userEmail = await pdf_email.findOne({where:{
-      id:pdfEmailId
-    }})
+    console.log("record", pdfRecord.dataValues.pdfEmailIdfk)
+    const userEmail = await pdf_email.findOne({
+      where: {
+        id: pdfEmailId
+      }
+    })
     const email_to = userEmail.dataValues.email_to
-    console.log("userEmail",userEmail)
-    const pdfEmailUpdate = await pdf_email.update( { isSigned: true },
+    console.log("userEmail", userEmail)
+    const pdfEmailUpdate = await pdf_email.update({ isSigned: true },
       {
         where: {
           id: pdfEmailId,
         },
       },)
     if (pdfRecord) {
-      await pdfRecord.update({ pdfUrl:destination,isSigned:true , email_to:email_to});
+      await pdfRecord.update({ pdfUrl: destination, isSigned: true, email_to: email_to });
       console.log('Database updated successfully with new PDF URL');
     }
 
@@ -323,20 +326,27 @@ const labReoprtData = async (labDataArray, labReportId) => {
     for (const data of labDataArray) {
       const { lab_provider, lab_name, refValue } = data;
       const mapKey = `${lab_provider}_${lab_name}`; // Create a unique key for the map.
-
+  
       if (!refRangeDataMap.has(mapKey)) {
-        // Find existing reference range data or create a new one if it doesn't exist.
-        let refRangeData = await ref_range_data.findOne({ 
-          where: { lab_name, labProvider: lab_provider }
-        });
-
-        if (!refRangeData) {
-          refRangeData = await ref_range_data.create({ lab_name, labProvider: lab_provider, refValue });
-        }
-
-        refRangeDataMap.set(mapKey, refRangeData.id); // Store the reference range data ID in the map.
+          // Find existing reference range data or create a new one if it doesn't exist.
+          let refRangeData = await ref_range_data.findOne({
+              where: { lab_name, labProvider: lab_provider }
+          });
+  
+          if (!refRangeData) {
+              // If no existing data, create a new entry.
+              refRangeData = await ref_range_data.create({ lab_name, labProvider: lab_provider, refValue });
+          } else if (refRangeData.refValue !== refValue) {
+              // If existing data has a different refValue, update it.
+              await ref_range_data.update({ refValue }, {
+                  where: { id: refRangeData.id }
+              });
+              refRangeData.refValue = refValue; // Update the local cache of object to reflect new refValue
+          }
+  
+          refRangeDataMap.set(mapKey, refRangeData.id); // Store the reference range data ID in the map.
       }
-    }
+  }
 
     // Process and save each lab report data entry.
     const saveOperations = labDataArray.map(async (data) => {
@@ -547,72 +557,83 @@ const logoExtraction = async (pdfPath, apiUrl) => {
  * @param {string} email_to - Email identifier for lab report filtering.
  * @returns {Promise<object>} - A promise that resolves to the updated lab reports or an error message.
  */
-const findAllLabData = async (extractedData, email_to) => {
+const findAllLabData = async (extractedData, email_to,newPdfUrl) => {
   try {
     console.log("dataaaa", extractedData);
     const Labreports = await Promise.all(extractedData.tests.map(async (name) => {
-        return lab_report.findAll({
-            where: {
-                protocolId: extractedData.protocolId,
-                subjectId: extractedData.subjectId,
-                email_to: email_to,
-                timePoint: extractedData.timePoint,
-                time_of_collection: extractedData.timeOfCollection,
-                dateOfCollection: extractedData.dateOfCollection
-            },
-            include: [{
-                model: labreport_data,
-                as: 'labreport_data',
-                where: { lab_name: name.lab_name },
-                required: true,
-            }]
-        });
+      return lab_report.findAll({
+        where: {
+          protocolId: extractedData.protocolId,
+          subjectId: extractedData.subjectId,
+          email_to: email_to,
+          timePoint: extractedData.timePoint,
+          time_of_collection: extractedData.timeOfCollection,
+          dateOfCollection: extractedData.dateOfCollection
+        },
+        include: [{
+          model: labreport_data,
+          as: 'labreport_data',
+          where: { lab_name: name.lab_name },
+          required: true,
+        }]
+      });
     }));
 
     console.log("Data collected:", Labreports);
 
     const updateLabReports = async (Labreports, extractedData) => {
       try {
-          const updatedRecords = [];
+        const updatedRecords = [];
 
-          // Iterate over each report in Labreports array
-          for (const reportArray of Labreports) {
-              for (const report of reportArray) {
-                  for (const labData of report.labreport_data) {
-                      // Find the corresponding test data from extractedData
-                      const testData = extractedData.tests.find(test => test.lab_name === labData.lab_name);
+        // Iterate over each report in Labreports array
+        for (const reportArray of Labreports) {
+          for (const report of reportArray) {
+            for (const labData of report.labreport_data) {
+              // Find the corresponding test data from extractedData
+              const testData = extractedData.tests.find(test => test.lab_name === labData.lab_name);
 
-                      if (testData) {
-                          // Store original data
-                          const originalData = { ...labData.dataValues };
-    
-                          // Check if existing value is not empty and new value is "Pending"
-                          if (labData.value && testData.value === "Pending") {
-                              console.log("Skipping update for", labData.lab_name, "as new data is 'Pending' and old data is not empty.");
-                              continue; // Skip this iteration, thus not updating the value to "Pending"
-                          }
-    
-                          // Perform update
-                          await labData.update({ value: testData.value });
+              if (testData) {
+                // Store original data
+                const originalData = { ...labData.dataValues };
 
-                          // Store updated data
-                          const updatedData = { ...labData.dataValues };
-
-                          // Collect original and updated data
-                          updatedRecords.push({
-                              originalData,
-                              updatedData
-                          });
-                      }
+                // Check if existing value is not empty and new value is "Pending"
+                if (labData.value && testData.value === "Pending") {
+                  console.log("Skipping update for", labData.lab_name, "as new data is 'Pending' and old data is not empty.");
+                  continue; // Skip this iteration, thus not updating the value to "Pending"
+                }
+                console.log("datttaaaaaa",report.dataValues.pdfEmailIdfk)
+                console.log("urlllllllllllll",newPdfUrl)
+                const pdfEmailIdfk = report.dataValues.pdfEmailIdfk
+                // Perform update
+                await labData.update({ value: testData.value });
+                const pdfEmailRecord = await pdf_email.update({
+                  pdfPath:newPdfUrl
+                },
+                {
+                  where:{
+                    id:pdfEmailIdfk
                   }
-              }
-          }
+                }
+              );
+            
+                // Store updated data
+                const updatedData = { ...labData.dataValues };
 
-          console.log("All lab data values updated successfully.", updatedRecords);
-          return updatedRecords;  // Return details of updates
+                // Collect original and updated data
+                updatedRecords.push({
+                  originalData,
+                  updatedData
+                });
+              }
+            }
+          }
+        }
+
+        console.log("All lab data values updated successfully.", updatedRecords);
+        return updatedRecords;  // Return details of updates
       } catch (error) {
-          console.error("Error updating lab data values:", error);
-          throw error;  // Re-throw to handle it later if necessary
+        console.error("Error updating lab data values:", error);
+        throw error;  // Re-throw to handle it later if necessary
       }
     }
 
