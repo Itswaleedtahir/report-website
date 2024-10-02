@@ -26,6 +26,14 @@ module.exports = (sequelize, DataTypes) => {
           key: 'id'
         }
       },
+      pdfEmailIdFk: {  // New column
+        type: DataTypes.INTEGER,
+        allowNull: false,
+        references: {
+          model: 'pdf_email',
+          key: 'id'
+        }
+      },
       lab_name: {
         type: DataTypes.STRING,
         allowNull: false,

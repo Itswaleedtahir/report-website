@@ -7,7 +7,7 @@ const { v4: uuidv4 } = require('uuid');
 const cors = require("cors")({ origin: true });
 const sgMail = require('@sendgrid/mail');
 const { Op, Sequelize } = require("sequelize");
-const { UplaodFile, PdfEmail, labReport, labReoprtData, MakeCsv, pdfProcessor, findAllLabData, insertOrUpdateLabReport, logoExtraction, UploadFile } = require("./helper/GpData");
+const { UplaodFile, PdfEmail, labReport, labReoprtData, MakeCsv, pdfProcessor, findAllLabData, insertOrUpdateLabReport, logoExtraction, UploadFile,coordinateExtraction } = require("./helper/GpData");
 const { users, admin, pdf_email, labreport_data, lab_report, labreport_csv, ref_range_data, signedPdfs } = require("./models/index");
 const fs = require('fs');
 const sequelize = require('./config/db'); // Import the configured instance
@@ -212,22 +212,115 @@ exports.test = onRequest(async (req, res) => {
   });
 });
 
+function extractPDFs(base64Content) {
+  const boundaryRegex = /filename="([^"]+.pdf)";[\s\S]+?base64\s([\s\S]*?)\n--/g;
+  let match;
+  let pdfs = [];
+  while ((match = boundaryRegex.exec(base64Content)) !== null) {
+    pdfs.push({
+      filename: match[1],
+      base64Content: match[2].replace(/[\r\n]+/g, '')  // Remove newlines in base64 encoding
+    });
+  }
+  return pdfs;
+}
+function extractPDFAttachments(email) {
+  const boundaryMatch = email.match(/boundary="?([^"\s;]+)"?/);
+  if (!boundaryMatch) {
+    return []; // No boundary found
+  }
+  const boundary = boundaryMatch[1];
+
+  // Adjusted regex to skip over additional headers before Base64 content
+  const boundaryRegex = new RegExp(`--${boundary}(?:\\r\\n|\\r|\\n).*?Content-Type: application/pdf;[^]+?filename="([^"]+)"[^]+?X-Attachment-Id: [^\\r\\n]+(?:\\r\\n|\\r|\\n){2}([\\s\\S]*?)(?=--${boundary}|--$)`, 'gi');
+
+  const attachments = [];
+  let match;
+  console.log("whileloopstartrteddd")
+  while ((match = boundaryRegex.exec(email)) !== null) {
+    const [, filename, base64Content] = match;
+    // Trimming and removing any extra headers before the Base64 content starts
+    const cleanBase64 = base64Content.replace(/^[\\r\\n]+/, '').trim();
+    attachments.push({
+      filename,
+      base64Content: cleanBase64
+    });
+  }
+  console.log("whileloopended")
+
+  return attachments;
+}
+const extractData = (data, logo) => {
+  if (!Array.isArray(data)) {
+    console.error('Invalid input: data is not an array');
+    return;  // or throw an error, or handle this case as needed
+  }
+
+  const tests = data.filter(item => item.type === "Tests").map(test => {
+
+    // Assuming that the properties are nested arrays, flatten them first
+    const properties = test.properties.flat(); // Flatten the nested arrays
+
+    const labTest = properties.find(prop => prop.type === "Test");
+    const result = properties.find(prop => prop.type === "Result");
+
+    // Find the first refRange with a length less than or equal to 30 characters
+    const refRange = properties.filter(prop => prop.type === "Ref_Range")
+      .find(prop => prop.mentionText.length <= 30);
+
+    return {
+      lab_provider: logo.lab_name || "Medpace",
+      lab_name: labTest ? labTest.mentionText : 'Unknown',
+      value: result ? result.mentionText : 'Pending',
+      refValue: refRange ? refRange.mentionText : 'N/A' // Handle missing reference range gracefully
+    };
+  });
+
+  return {
+    protocolId: data.find(item => item.type === "protocolId")?.mentionText || 'Unknown',
+    investigator: data.find(item => item.type === "investigator")?.mentionText || 'Unknown',
+    subjectId: data.find(item => item.type === "subjectId")?.mentionText || 'Unknown',
+    dateOfCollection: data.find(item => item.type === "dateOfCollection")?.mentionText || 'Unknown',
+    timePoint: data.find(item => item.type === "timePoint")?.mentionText || 'Unknown',
+    timeOfCollection: data.find(item => item.type === "Time_of_Collecton")?.mentionText || 'Unknown',
+    tests: tests
+  };
+};
+
+function cleanTestData(data) {
+  // Iterate through tests using a for loop
+  for (let i = 0; i < data.tests.length; i++) {
+    let test = data.tests[i];
+
+    // Remove alphabetic characters from value if not "Pending"
+    if (test.value !== "Pending") {
+      test.value = test.value.replace(/[a-zA-Z]/g, '').trim();
+    }
+
+    // Check refValue length and remove if too long
+    if (test.refValue && test.refValue.length > 30) {
+      console.log(`Removing long refValue: ${test.refValue}`);
+      delete test.refValue; // This will remove the refValue field from the test
+    }
+  }
+
+  return data;
+}
+
 // This function sets up a listener for SendGrid email webhook events and processes PDF attachments.
-exports.SendGridEmailListener = onRequest({
+exports.SendGridEmailListenerForEmailData = onRequest({
   timeoutSeconds: 3600, // Set the function timeout to 1 hour
   memory: "1GiB", // Allocate 1 GiB of memory to the function
   // maxInstances: 10  // Increase max instances as needed
 }, async (req, res) => {
   cors(req, res, async () => {
     try {
-
+    res.status(200).send("pdf done")
       // Convert the buffer to a UTF-8 string
       const bufferDataString = req.body.toString('utf8');
 
       // Split the email data assuming it's multipart
       let parts = bufferDataString.split("--xYzZY");
-
-      console.log("parts", parts)
 
       // Initialize variables to store extracted data
       let toAddress = "";
@@ -253,44 +346,6 @@ exports.SendGridEmailListener = onRequest({
       const DateReceived = parts.find(part => DatePattern.test(part));
       if (DateReceived) {
         DateReceivedEmail = DateReceived.match(DatePattern)[1].trim();
-      }
-
-      function extractPDFs(base64Content) {
-        const boundaryRegex = /filename="([^"]+.pdf)";[\s\S]+?base64\s([\s\S]*?)\n--/g;
-        let match;
-        let pdfs = [];
-        while ((match = boundaryRegex.exec(base64Content)) !== null) {
-          pdfs.push({
-            filename: match[1],
-            base64Content: match[2].replace(/[\r\n]+/g, '')  // Remove newlines in base64 encoding
-          });
-        }
-        return pdfs;
-      }
-      function extractPDFAttachments(email) {
-        const boundaryMatch = email.match(/boundary="?([^"\s;]+)"?/);
-        if (!boundaryMatch) {
-          return []; // No boundary found
-        }
-        const boundary = boundaryMatch[1];
-
-        // Adjusted regex to skip over additional headers before Base64 content
-        const boundaryRegex = new RegExp(`--${boundary}(?:\\r\\n|\\r|\\n).*?Content-Type: application/pdf;[^]+?filename="([^"]+)"[^]+?X-Attachment-Id: [^\\r\\n]+(?:\\r\\n|\\r|\\n){2}([\\s\\S]*?)(?=--${boundary}|--$)`, 'gi');
-
-        const attachments = [];
-        let match;
-
-        while ((match = boundaryRegex.exec(email)) !== null) {
-          const [, filename, base64Content] = match;
-          // Trimming and removing any extra headers before the Base64 content starts
-          const cleanBase64 = base64Content.replace(/^[\\r\\n]+/, '').trim();
-          attachments.push({
-            filename,
-            base64Content: cleanBase64
-          });
-        }
-
-        return attachments;
       }
 
       let attachments
@@ -322,8 +377,15 @@ exports.SendGridEmailListener = onRequest({
         attachments: attachments
       };
 
+
       // Process each PDF attachment
-      attachments.forEach(async (attachment) => {
+      // console.log("attachements", attachments)
+      console.log("attachements count", attachments.length)
+
+      // return res.status(200).send("finish")
+      for (const attachment of attachments) {
+        // const results = await Promise.all(attachments.map(async (attachment) => {
+        console.log("pdf", attachment)
         const pdfBuffer = Buffer.from(attachment.base64Content, 'base64');
 
         // Generate a timestamp-based filename
@@ -341,7 +403,7 @@ exports.SendGridEmailListener = onRequest({
         // Example: Print the extracted data
         console.log("To:", toAddress);
         console.log("From:", fromAddress);
-        console.log("Attachments:", attachments);
+        console.log("Attachments:", attachment);
         console.log("Date,", DateReceivedEmail)
         console.log("path", pdfPath)
         const AccessCheck = await users.findOne({ where: { user_email: toAddress } })
@@ -353,64 +415,17 @@ exports.SendGridEmailListener = onRequest({
           const { logo } = await logoExtraction(pdfPath, logoUrl)
           const { data } = await pdfProcessor(pdfPath, apiUrl)
 
-          // Extract and map data from the parsed JSON response
-          const extractData = (data) => {
-            if (!Array.isArray(data)) {
-              console.error('Invalid input: data is not an array');
-              return;  // or throw an error, or handle this case as needed
-            }
-
-            const tests = data.filter(item => item.type === "Tests").map(test => {
-
-              // Assuming that the properties are nested arrays, flatten them first
-              const properties = test.properties.flat(); // Flatten the nested arrays
-
-              const labTest = properties.find(prop => prop.type === "Test");
-              const result = properties.find(prop => prop.type === "Result");
-
-              // Find the first refRange with a length less than or equal to 30 characters
-              const refRange = properties.filter(prop => prop.type === "Ref_Range")
-                .find(prop => prop.mentionText.length <= 30);
-
-              return {
-                lab_provider: logo.lab_name || "Medpace",
-                lab_name: labTest ? labTest.mentionText : 'Unknown',
-                value: result ? result.mentionText : 'Pending',
-                refValue: refRange ? refRange.mentionText : 'N/A' // Handle missing reference range gracefully
-              };
-            });
-
-            return {
-              protocolId: data.find(item => item.type === "protocolId")?.mentionText || 'Unknown',
-              investigator: data.find(item => item.type === "investigator")?.mentionText || 'Unknown',
-              subjectId: data.find(item => item.type === "subjectId")?.mentionText || 'Unknown',
-              dateOfCollection: data.find(item => item.type === "dateOfCollection")?.mentionText || 'Unknown',
-              timePoint: data.find(item => item.type === "timePoint")?.mentionText || 'Unknown',
-              timeOfCollection: data.find(item => item.type === "Time_of_Collecton")?.mentionText || 'Unknown',
-              tests: tests
-            };
-          };
-
-          let extractedData = extractData(data);
-
-          function cleanTestData(data) {
-
-            // Iterate through tests and clean values and refValues
-            data.tests.forEach(test => {
-              // Remove alphabetic characters from value if not "Pending"
-              if (test.value !== "Pending") {
-                test.value = test.value.replace(/[a-zA-Z]/g, '').trim();
-              }
-
-              // Check refValue length and remove if too long
-              if (test.refValue && test.refValue.length > 30) {
-                console.log(`Removing long refValue: ${test.refValue}`);
-                delete test.refValue; // This will remove the refValue field from the test
-              }
-            });
-
-            return data;
+          if (!Array.isArray(data)) {
+            console.error("Failed to extract data for:", pdfPath);
+            continue; // This will skip the remaining code in the loop and move to the next iteration
           }
+          // Extract and map data from the parsed JSON response
+
+
+          let extractedData = extractData(data, logo);
+
+
+
           extractedData = cleanTestData(extractedData);
           // console.log("cleandddd",cleand)
           // return
@@ -424,13 +439,13 @@ exports.SendGridEmailListener = onRequest({
           const { pdfEmailId } = await PdfEmail(DateReceivedEmail, pdfname, destination, toAddress);
 
           //Checking if data is repeating
-          await findAllLabData(extractedData, toAddress,destination)
+          await findAllLabData(extractedData, toAddress, destination, pdfEmailId)
 
           //Updating the data if already exist
           const { message, datamade } = await insertOrUpdateLabReport(extractedData, toAddress)
           console.log("message", datamade)
           if (message === 'Add') {
-            const test = await findAllLabData(datamade, toAddress,destination)
+            const test = await findAllLabData(datamade, toAddress, destination, pdfEmailId)
             const { message } = await insertOrUpdateLabReport(datamade, toAddress)
             console.log("hereeee", message)
             if (message === 'Add') {
@@ -443,7 +458,7 @@ exports.SendGridEmailListener = onRequest({
               console.log("data", labdata)
 
               //Dumping data into DB againt labreportdatta table
-              const labreportEntry = await labReoprtData(labdata, labReportId);
+              const labreportEntry = await labReoprtData(labdata, labReportId, pdfEmailId);
               const status = "sent";
 
               //Making csv saving into GDS and adding into DB
@@ -461,12 +476,151 @@ exports.SendGridEmailListener = onRequest({
         } else {
           console.log("not found")
         }
-      })
+      }
+      // attachments.forEach(async (attachment) => {
+      //   const pdfBuffer = Buffer.from(attachment.base64Content, 'base64');
+
+      //   // Generate a timestamp-based filename
+      //   const timestamp = new Date().getTime(); // Get current time in milliseconds
+      //   const filename = `output-${timestamp}.pdf`;
+
+      //   // Define the path to save the PDF
+      //   const uploadsDir = path.join(__dirname, 'uploads');
+      //   const pdfPath = path.join(uploadsDir, filename);
+
+      //   // Ensure the uploads directory exists
+      //   fs.mkdirSync(uploadsDir, { recursive: true });
+      //   // Write the binary data to a PDF file
+      //   fs.writeFileSync(pdfPath, pdfBuffer);
+      //   // Example: Print the extracted data
+      //   console.log("To:", toAddress);
+      //   console.log("From:", fromAddress);
+      //   console.log("Attachments:", attachments);
+      //   console.log("Date,", DateReceivedEmail)
+      //   console.log("path", pdfPath)
+      //   const AccessCheck = await users.findOne({ where: { user_email: toAddress } })
+      //   console.log("Access", AccessCheck)
+      //   if (AccessCheck.dataValues.access === 'Resume') {
+
+      //     const apiUrl = 'https://gpdataservices.com/process-pdf/'; // API Endpoint for Google document AI for processing the PDF's
+      //     const logoUrl = 'https://gpdataservices.com/ext-logo/' // API Endpoint for extracting Logo from the pdf's
+      //     const { logo } = await logoExtraction(pdfPath, logoUrl)
+      //     const { data } = await pdfProcessor(pdfPath, apiUrl)
+
+      //     // Extract and map data from the parsed JSON response
+      //     const extractData = (data) => {
+      //       if (!Array.isArray(data)) {
+      //         console.error('Invalid input: data is not an array');
+      //         return;  // or throw an error, or handle this case as needed
+      //       }
+
+      //       const tests = data.filter(item => item.type === "Tests").map(test => {
+
+      //         // Assuming that the properties are nested arrays, flatten them first
+      //         const properties = test.properties.flat(); // Flatten the nested arrays
+
+      //         const labTest = properties.find(prop => prop.type === "Test");
+      //         const result = properties.find(prop => prop.type === "Result");
+
+      //         // Find the first refRange with a length less than or equal to 30 characters
+      //         const refRange = properties.filter(prop => prop.type === "Ref_Range")
+      //           .find(prop => prop.mentionText.length <= 30);
+
+      //         return {
+      //           lab_provider: logo.lab_name || "Medpace",
+      //           lab_name: labTest ? labTest.mentionText : 'Unknown',
+      //           value: result ? result.mentionText : 'Pending',
+      //           refValue: refRange ? refRange.mentionText : 'N/A' // Handle missing reference range gracefully
+      //         };
+      //       });
+
+      //       return {
+      //         protocolId: data.find(item => item.type === "protocolId")?.mentionText || 'Unknown',
+      //         investigator: data.find(item => item.type === "investigator")?.mentionText || 'Unknown',
+      //         subjectId: data.find(item => item.type === "subjectId")?.mentionText || 'Unknown',
+      //         dateOfCollection: data.find(item => item.type === "dateOfCollection")?.mentionText || 'Unknown',
+      //         timePoint: data.find(item => item.type === "timePoint")?.mentionText || 'Unknown',
+      //         timeOfCollection: data.find(item => item.type === "Time_of_Collecton")?.mentionText || 'Unknown',
+      //         tests: tests
+      //       };
+      //     };
+
+      //     let extractedData = extractData(data);
+
+      //     function cleanTestData(data) {
+
+      //       // Iterate through tests and clean values and refValues
+      //       data.tests.forEach(test => {
+      //         // Remove alphabetic characters from value if not "Pending"
+      //         if (test.value !== "Pending") {
+      //           test.value = test.value.replace(/[a-zA-Z]/g, '').trim();
+      //         }
+
+      //         // Check refValue length and remove if too long
+      //         if (test.refValue && test.refValue.length > 30) {
+      //           console.log(`Removing long refValue: ${test.refValue}`);
+      //           delete test.refValue; // This will remove the refValue field from the test
+      //         }
+      //       });
+
+      //       return data;
+      //     }
+      //     extractedData = cleanTestData(extractedData);
+      //     // console.log("cleandddd",cleand)
+      //     // return
+
+      //     // Call function to upload file and get necessary data
+      //     const { pdfname, destination } = await UplaodFile(pdfPath, extractedData);
+      //     const pdfURL = `${process.env.STORAGE_URL}${destination}`;
+      //     console.log("URL: ", pdfURL);
+
+      //     //Calling function to dump the data in pdf_email table 
+      //     const { pdfEmailId } = await PdfEmail(DateReceivedEmail, pdfname, destination, toAddress);
+
+      //     //Checking if data is repeating
+      //     await findAllLabData(extractedData, toAddress,destination)
+
+      //     //Updating the data if already exist
+      //     const { message, datamade } = await insertOrUpdateLabReport(extractedData, toAddress)
+      //     console.log("message", datamade)
+      //     if (message === 'Add') {
+      //       const test = await findAllLabData(datamade, toAddress,destination)
+      //       const { message } = await insertOrUpdateLabReport(datamade, toAddress)
+      //       console.log("hereeee", message)
+      //       if (message === 'Add') {
+      //         console.log("after update Add")
+
+      //         //Dumping data into lab_Report table in db
+      //         const { labReportId } = await labReport(datamade, pdfEmailId, toAddress);
+      //         // Use extracted test data for lab report entries
+      //         const labdata = datamade.tests;
+      //         console.log("data", labdata)
+
+      //         //Dumping data into DB againt labreportdatta table
+      //         const labreportEntry = await labReoprtData(labdata, labReportId);
+      //         const status = "sent";
+
+      //         //Making csv saving into GDS and adding into DB
+      //         const csv = await MakeCsv(labReportId, datamade);
+      //         console.log("CSV: ", csv);
+      //         console.log("Process completed")
+      //       } else {
+      //         console.log("Data after update already exist")
+      //       }
+      //     } else {
+      //       console.log("Data already exists")
+      //     }
+      //   } else if (AccessCheck.dataValues.access === 'Paused') {
+      //     console.log("User access is paused")
+      //   } else {
+      //     console.log("not found")
+      //   }
+      // })
       console.log("pdfs are processed")
-      return res.status(200).send("PDF's are processed")
+      // return res.status(200).send("PDF's are processed")
     } catch (error) {
       console.error("Error processing request:", error);
-      return res.status(500).send("Error processing request.");
+      return res.status(200).send("Error processing request.");
     }
   })
 });
@@ -618,44 +772,80 @@ exports.searchLabReportsByFilters = onRequest(async (req, res) => {
         });
       }
 
-      const pdfResults = await Promise.all(labReports.map(async (report) => {
+      const pdfResultsforId = await Promise.all(labReports.map(async (report) => {
         return pdf_email.findAll({ where: { id: report.pdfEmailIdfk } });
       }));
-      const pdfPathMap = pdfResults.flat().reduce((acc, pdf) => ({
+      const pdfPathMapId = pdfResultsforId.flat().reduce((acc, pdf) => ({
         ...acc,
         [pdf.id]: pdf.dataValues.pdfPath
       }), {});
 
-      function transformData(reports, pdfPathMap) {
-        const uniqueReportsMap = new Map();
+      console.log("pdfPathMapId",pdfPathMapId)
 
-        reports.forEach(report => {
-          if (report.labreport_data && report.labreport_data.length > 0) {
-            report.labreport_data.forEach(data => {
+      const pdfResults = await Promise.all(labReports.map(async (report) => {
+        return Promise.all(report.labreport_data.map(async data => { // Ensure all inner promises are resolved
+          return pdf_email.findAll({ where: { id: data.pdfEmailIdFk } });
+        }));
+      }));
+
+      const flatPdfResults = pdfResults.flat(2); // You might need more or less flattening based on actual data structure
+
+
+      
+const pdfPathMap = flatPdfResults.reduce((acc, pdf) => {
+  if (Array.isArray(pdf)) { // Check if it's an array and handle accordingly
+    pdf.forEach(innerPdf => {
+      acc[innerPdf.id] = innerPdf.dataValues.pdfPath;
+    });
+  } else {
+    acc[pdf.id] = pdf.dataValues.pdfPath; // Handle non-array case
+  }
+  return acc;
+}, {});
+
+function transformData(reports, pdfPathMap, pdfPathMapId) {
+  console.log("pdf", pdfPathMap)
+  const uniqueReportsMap = new Map();
+
+  reports.forEach(report => {
+      if (report.labreport_data && report.labreport_data.length > 0) {
+          report.labreport_data.forEach(data => {
               const uniqueKey = `${report.protocolId}-${report.investigator}-${report.subjectId}-${report.dateOfCollection}-${report.timePoint}-${report.email_to}-${report.time_of_collection}-${data.lab_name}`;
 
               let existingEntry = uniqueReportsMap.get(uniqueKey);
               if (!existingEntry || existingEntry.value === "Pending" && data.value !== "Pending") {
-                const combinedData = {
-                  ...report.dataValues,
-                  ...data.dataValues,
-                  pdfpath: pdfPathMap[report.pdfEmailIdfk],
-                  labreport_data: undefined
-                };
-                uniqueReportsMap.set(uniqueKey, combinedData);
-              }
-            });
-          }
-        });
+                  // Attempt to get the pdfPath from pdfPathMap using data.pdfEmailIdFk
+                  let pdfPath = pdfPathMap[data.pdfEmailIdFk];
 
-        return Array.from(uniqueReportsMap.values());
+                  // If pdfPath is undefined, check pdfPathMapId
+                  if (!pdfPath) {
+                      pdfPath = pdfPathMapId[report.dataValues.pdfEmailIdfk];
+                  }
+
+                  // Log the pdfPath for debugging
+                  console.log("pdfPath", pdfPath);
+
+                  const combinedData = {
+                      ...report.dataValues,
+                      ...data.dataValues,
+                      pdfpath: pdfPath || 'default/path/if/none/found', // Set a default path or handle as needed
+                      labreport_data: undefined
+                  };
+                  uniqueReportsMap.set(uniqueKey, combinedData);
+              }
+          });
       }
+  });
+
+  return Array.from(uniqueReportsMap.values());
+}
+
 
       labReports.sort((a, b) => {
         return new Date(b.dataValues.dateOfCollection) - new Date(a.dataValues.dateOfCollection);
       });
 
-      const transformedReports = transformData(labReports, pdfPathMap);
+      const transformedReports = transformData(labReports, pdfPathMap,pdfPathMapId);
       const startIndex = (page - 1) * pageSize;
       const paginatedLabReports = transformedReports.slice(startIndex, startIndex + pageSize);
 
@@ -668,7 +858,7 @@ exports.searchLabReportsByFilters = onRequest(async (req, res) => {
           pageSize
         }
       });
-    } catch ( error) {
+    } catch (error) {
       console.error('Error in processing:', error);
       if (error.message === 'Forbidden') {
         return res.sendStatus(403);
@@ -746,10 +936,10 @@ exports.getPlotValuesByFilters = onRequest(async (req, res) => {
               if (!existingEntry || existingEntry.value === "Pending" && data.value !== "Pending") {
                 const combinedData = {
                   lab_name: data.lab_name,
-          time_of_collection: report.time_of_collection,
-          value: data.value,
-          dateOfCollection: report.dateOfCollection,
-          email_to:report.email_to
+                  time_of_collection: report.time_of_collection,
+                  value: data.value,
+                  dateOfCollection: report.dateOfCollection,
+                  email_to: report.email_to
                 };
                 uniqueReportsMap.set(uniqueKey, combinedData);
               }
@@ -1150,13 +1340,14 @@ exports.employeeInvite = onRequest(async (req, res) => {
           invitedBy: email_to
         }
       });
-      if(existingInvitation){
-      if (existingInvitation.token === null) {
-        // If an invitation already exists by this inviter, return a 400 Bad Request status with a message
-        return res.status(400).json({ message: `You have already invited ${clientEmail}` });
-      }}
+      if (existingInvitation) {
+        if (existingInvitation.token === null) {
+          // If an invitation already exists by this inviter, return a 400 Bad Request status with a message
+          return res.status(400).json({ message: `You have already invited ${clientEmail}` });
+        }
+      }
       const expirationPeriod = 3 * 60 * 1000; // 3 minutes in milliseconds
-const expirationDate = new Date(Date.now() + expirationPeriod);
+      const expirationDate = new Date(Date.now() + expirationPeriod);
 
       // Check if the user was invited by someone else
       const existingUser = await users.findOne({
@@ -1164,12 +1355,12 @@ const expirationDate = new Date(Date.now() + expirationPeriod);
           user_email: clientEmail
         }
       });
-      
+
       if (existingUser) {
-         // If invitedBy is null, it means the user was created by an admin and no invitation should be sent
-       if (existingUser.invitedBy === null) {
-        return res.status(400).json({ message: `User with email ${clientEmail} was set by an admin. Invitations cannot be sent.` });
-      }
+        // If invitedBy is null, it means the user was created by an admin and no invitation should be sent
+        if (existingUser.invitedBy === null) {
+          return res.status(400).json({ message: `User with email ${clientEmail} was set by an admin. Invitations cannot be sent.` });
+        }
         // If the token is empty, the user has already set their password
         if (!existingUser.token) {
           // Create a new user entry for this inviter (email_to), keeping the clientEmail
@@ -1185,7 +1376,7 @@ const expirationDate = new Date(Date.now() + expirationPeriod);
           // Handle expired invitation
           return res.status(400).json({ message: `The invitation for ${clientEmail} has not expired yet.` });
         }
-        
+
         // If the token is not empty, update it with a new token and resend the invitation email
         const newToken = uuidv4();
         existingUser.token = newToken;
@@ -1213,23 +1404,23 @@ const expirationDate = new Date(Date.now() + expirationPeriod);
         await sgMail.send(msg);
         console.log('Updated invitation email sent successfully', msg);
         return res.status(200).send('Updated invitation email sent successfully');
-      }else{
+      } else {
         const newToken = uuidv4();
         await users.create({
           user_email: clientEmail,
           invitedBy: email_to,
-          token:newToken,
-          expirationDate:expirationDate,
+          token: newToken,
+          expirationDate: expirationDate,
           isEmployee: true
         });
-          // Send the updated email with the new token
-          const invitationUrl = `http://gpdataservices.com/invite/${newToken}`;
-          const msg = {
-            to: clientEmail, // Recipient's email
-            from: 'support@gpdataservices.com', // Your verified sender email
-            subject: 'Invitation to Set Your Password',
-            text: `Please click the following link to set your password: ${invitationUrl}`, // Text version of the email
-            html: `<div style="font-family: Arial, sans-serif; font-size: 16px; color: #333;">
+        // Send the updated email with the new token
+        const invitationUrl = `http://gpdataservices.com/invite/${newToken}`;
+        const msg = {
+          to: clientEmail, // Recipient's email
+          from: 'support@gpdataservices.com', // Your verified sender email
+          subject: 'Invitation to Set Your Password',
+          text: `Please click the following link to set your password: ${invitationUrl}`, // Text version of the email
+          html: `<div style="font-family: Arial, sans-serif; font-size: 16px; color: #333;">
               <h2>Welcome to GP Data Services!</h2>
               <p>We’re thrilled to have you join our community and can’t wait to collaborate with you. Our platform is built to supercharge your data management, providing you with powerful tools to organize, trend, and recruit based off of your lab data—all designed to elevate your research efforts.</p>
               <p>Together, we’ll make your data work harder and smarter for you.</p>
@@ -1238,11 +1429,11 @@ const expirationDate = new Date(Date.now() + expirationPeriod);
               <p><a href="${invitationUrl}" style="color: #1a73e8; text-decoration: none;">Set Your Password</a></p>
               <img src="https://storage.googleapis.com/gpdata01/image/image-3.png" style="padding-top: 20px;" width="300px"/>
             </div>`,
-          };
-  
-          await sgMail.send(msg);
-          console.log(' invitation email sent successfully', msg);
-          return res.status(200).send('invitation email sent successfully');
+        };
+
+        await sgMail.send(msg);
+        console.log(' invitation email sent successfully', msg);
+        return res.status(200).send('invitation email sent successfully');
 
       }
     } catch (error) {
@@ -1769,7 +1960,7 @@ exports.getClientByEmail = onRequest(async (req, res) => {
       }
 
       // If the user is found, return the user details with a 200 OK status.
-     return res.status(200).send([clientData]);
+      return res.status(200).send([clientData]);
     } catch (error) {
       // Log the error if there is an issue retrieving the user.
       console.error('Failed to retrieve user:', error);
@@ -1948,24 +2139,24 @@ exports.onlyLabNameSearch = onRequest({
         });
       });
 
-    // Get email_to from the request body
-    let email_to = req.body.email_to;
+      // Get email_to from the request body
+      let email_to = req.body.email_to;
 
-    // Ensure email_to is an array and provided
-    if (!email_to || !Array.isArray(email_to) || email_to.length === 0) {
-      return res.status(400).send("Email_to array is required.");
-    }
+      // Ensure email_to is an array and provided
+      if (!email_to || !Array.isArray(email_to) || email_to.length === 0) {
+        return res.status(400).send("Email_to array is required.");
+      }
 
-    // Find the users based on email_to and filter out archived users
-    const usersFound = await users.findAll({
-      where: { user_email: email_to }
-    });
+      // Find the users based on email_to and filter out archived users
+      const usersFound = await users.findAll({
+        where: { user_email: email_to }
+      });
 
-    const nonArchivedEmails = usersFound.filter(user => !user.isArchived).map(user => user.user_email);
+      const nonArchivedEmails = usersFound.filter(user => !user.isArchived).map(user => user.user_email);
 
-    if (nonArchivedEmails.length === 0) {
-      return res.status(400).send({ message: 'All provided users are archived' });
-    }
+      if (nonArchivedEmails.length === 0) {
+        return res.status(400).send({ message: 'All provided users are archived' });
+      }
       let labReports = [];
       let pdfPath = [];
 
@@ -1973,41 +2164,41 @@ exports.onlyLabNameSearch = onRequest({
         const valueCondition = {};
         let lab_names = JSON.parse(search.lab_name_json);
         if (search.minValue !== undefined && search.maxValue !== undefined) {
-            valueCondition.value = { [Sequelize.Op.between]: [search.minValue, search.maxValue] };
+          valueCondition.value = { [Sequelize.Op.between]: [search.minValue, search.maxValue] };
         } else if (search.minValue !== undefined) {
-            valueCondition.value = { [Sequelize.Op.gte]: search.minValue };
+          valueCondition.value = { [Sequelize.Op.gte]: search.minValue };
         } else if (search.maxValue !== undefined) {
-            valueCondition.value = { [Sequelize.Op.lte]: search.maxValue };
+          valueCondition.value = { [Sequelize.Op.lte]: search.maxValue };
         }
-          const result = await lab_report.findAll({
-                where: { email_to: { [Sequelize.Op.in]: nonArchivedEmails } },
-                include: [{
-                    model: labreport_data,
-                    as: 'labreport_data',
-                    where: { lab_name: lab_names, ...valueCondition },
-                    required: true,
-                    include: [{
-                        model: ref_range_data,
-                        as: 'refRangeData',
-                        attributes: ['refValue'],
-                        required: false
-                    }]
-                }]
-            });
-            labReports = labReports.concat(result.flat());
-    }));
-
-    const pdfPaths = await Promise.all(labReports.map(async (report) => {
-        return pdf_email.findAll({
-            where: { id: report.pdfEmailIdfk }
+        const result = await lab_report.findAll({
+          where: { email_to: { [Sequelize.Op.in]: nonArchivedEmails } },
+          include: [{
+            model: labreport_data,
+            as: 'labreport_data',
+            where: { lab_name: lab_names, ...valueCondition },
+            required: true,
+            include: [{
+              model: ref_range_data,
+              as: 'refRangeData',
+              attributes: ['refValue'],
+              required: false
+            }]
+          }]
         });
-    }));
-    pdfPath = pdfPath.concat(pdfPaths.flat());
+        labReports = labReports.concat(result.flat());
+      }));
 
-    const pdfPathMap = pdfPath.reduce((acc, pdf) => ({
-      ...acc,
-      [pdf.id]: pdf.dataValues.pdfPath
-    }), {});
+      const pdfPaths = await Promise.all(labReports.map(async (report) => {
+        return pdf_email.findAll({
+          where: { id: report.pdfEmailIdfk }
+        });
+      }));
+      pdfPath = pdfPath.concat(pdfPaths.flat());
+
+      const pdfPathMap = pdfPath.reduce((acc, pdf) => ({
+        ...acc,
+        [pdf.id]: pdf.dataValues.pdfPath
+      }), {});
       // Helper function to transform and de-duplicate lab reports data
       function transformData(reports, pdfPathMap) {
         const uniqueReportsMap = new Map();
@@ -2038,24 +2229,24 @@ exports.onlyLabNameSearch = onRequest({
         const transformedReports = transformData(labReports, pdfPathMap);
         // If only one record, send it directly
         return res.json({
-            data: transformedReports,
-            pagination: {
-                totalItems: 1,
-                totalPages: 1,
-                currentPage: 1,
-                pageSize: 1
-            }
+          data: transformedReports,
+          pagination: {
+            totalItems: 1,
+            totalPages: 1,
+            currentPage: 1,
+            pageSize: 1
+          }
         });
-    } else {
-      console.log("insdeelseeeeeeeee")
+      } else {
+        console.log("insdeelseeeeeeeee")
         // More than one record, apply filtering for the same protocolId and subjectId
         const filteredReports = labReports.reduce((acc, report) => {
-            const key = `${report.protocolId}-${report.subjectId}`;
-            if (!acc[key]) {
-                acc[key] = [];
-            }
-            acc[key].push(report);
-            return acc;
+          const key = `${report.protocolId}-${report.subjectId}`;
+          if (!acc[key]) {
+            acc[key] = [];
+          }
+          acc[key].push(report);
+          return acc;
         }, {});
 
         const finalReports = Object.values(filteredReports).filter(reports => reports.length > 1).flat();
@@ -2067,15 +2258,15 @@ exports.onlyLabNameSearch = onRequest({
         const paginatedLabReports = transformedReports.slice(startIndex, startIndex + pageSize);
 
         return res.json({
-            data: paginatedLabReports,
-            pagination: {
-                totalItems: transformedReports.length,
-                totalPages: Math.ceil(transformedReports.length / pageSize),
-                currentPage: page,
-                pageSize
-            }
+          data: paginatedLabReports,
+          pagination: {
+            totalItems: transformedReports.length,
+            totalPages: Math.ceil(transformedReports.length / pageSize),
+            currentPage: page,
+            pageSize
+          }
         });
-    }
+      }
     } catch (error) {
       console.error('Error in processing:', error);
       if (error.message === 'Forbidden') {
@@ -2158,7 +2349,9 @@ exports.getLabReportNamesByEmailForSearch = onRequest(async (req, res) => {
 });
 
 
-exports.signPdf = onRequest(async (req, res) => {
+exports.signPdf = onRequest({
+  timeoutSeconds: 3600, // Set the function timeout to 1 hour
+},async (req, res) => {
   cors(req, res, async () => {
     const authHeader = req.headers['authorization'];
     console.log("header", authHeader);  // Log the received authorization header for debugging
@@ -2177,20 +2370,37 @@ exports.signPdf = onRequest(async (req, res) => {
           }
         });
       });
-
-      // Determine the appropriate email to filter lab reports based on user role
-      let email_to = userDecode.user.isEmployee ? userDecode.user.invitedBy : userDecode.user.user_email;
-      if (!email_to) {
-        return res.status(400).send("Email parameter is required."); // Check if email is parsed correctly
-      }
-      const user = await users.findOne({ where: { user_email: email_to } });
-      console.log("user", user)
-      if (user.dataValues.isArchived == true) {
-        // If no user is found with the provided email, return a 404 Not Found status.
-        return res.status(400).send({ message: 'User is archived' });
-      }
+      
       const { pdfUrl } = req.body; // Use a URL in the request body
+  
+    
+      // // Determine the appropriate email to filter lab reports based on user role
+      // let email_to = userDecode.user.isEmployee ? userDecode.user.invitedBy : userDecode.user.user_email;
+      // if (!email_to) {
+      //   return res.status(400).send("Email parameter is required."); // Check if email is parsed correctly
+      // }
+      // const user = await users.findOne({ where: { user_email: email_to } });
+      console.log("user", userDecode)
       console.log(`PDF URL: ${pdfUrl}`); // Debug the URL
+      // const apiUrl = "https://gpdataservices.com/fetch-co-ordinates"
+      // const {coordinates} = await coordinateExtraction(pdfUrl ,apiUrl )
+      // console.log("coordinates",coordinates)
+      const cordinate = {
+        "output": {
+            "date_coords": [
+                322,
+                1863
+            ],
+            "sign_coords": [
+                378,
+                1818
+            ]
+        }
+    }
+    // Extract coordinates from the object
+const dateCoords = cordinate.output.date_coords;
+const signCoords = cordinate.output.sign_coords;
+      
       const parts = pdfUrl.split('/');
 
       // The PDF name is expected to be the last segment after the last '/'
@@ -2219,22 +2429,22 @@ exports.signPdf = onRequest(async (req, res) => {
             required: true,
             fixed_width: false,
             lock_sign_date: false,
-            x: 217,  // X coordinate for signature
-            y: 828,  // Y coordinate for signature
+            x: signCoords[0], // X coordinate for signature from coordinates object
+            y: signCoords[1], // Y coordinate for signature from coordinates object
             page: i,
             recipient_id: '9'
-          },
-          {
+        },
+        {
             type: 'date',
             required: true,
             fixed_width: false,
             lock_sign_date: false, // Set true if you want the date to auto-populate and lock
-            x: 590,  // Adjusted X coordinate for date box
-            y: 840,  // Same Y coordinate to align horizontally with signature
+            x: dateCoords[0], // X coordinate for date from coordinates object
+            y: dateCoords[1], // Y coordinate for date from coordinates object
             page: i,
             recipient_id: '9',
             date_format: 'MM/DD/YYYY' // Specify the format for the date
-          }
+        }
         );
       }
       console.log(`The PDF has ${pageCount} pages.`);
@@ -2262,7 +2472,7 @@ exports.signPdf = onRequest(async (req, res) => {
             send_email: false,
             send_email_delay: 0,
             id: '9',
-            email: 'waleedcodistan@gmail.com'
+            email: userDecode.email
           }
         ],
         fields: [
@@ -2284,7 +2494,7 @@ exports.signPdf = onRequest(async (req, res) => {
       } else {
         // General error handling if the response is not available
         console.error('Error:', err);
-        return res.status(500).send("Internal server error",err);
+        return res.status(500).send("Internal server error", err);
       }// Return Internal Server Error for other cases
     }
   });
@@ -2477,8 +2687,52 @@ exports.getPdfsForEmail = onRequest(async (req, res) => {
   });
 });
 
+exports.getArchiveUsersOnEmail = onRequest(async (req, res) => {
+  cors(req, res, async () => {
+    const userEmail = req.body.email; // Get email from the request body
 
-exports.getSignedPdf = onRequest(async(req, res) => {
+    try {
+      if (!userEmail) {
+        return res.status(400).json({ error: 'Email is required' });
+      }
+
+      const user = await users.findOne({
+        where: {
+          user_email: userEmail,
+          isArchived: true
+        }
+      });
+
+      if (!user) {
+        return res.status(404).json({ error: 'No archived user found with the provided email' });
+      }
+
+      // Fetch employees invited by this client
+      const employees = await users.findAll({
+        where: {
+          invitedBy: user.user_email,
+          isEmployee: true
+        },
+        attributes: ['user_email'] // Only fetch the employee's email
+      });
+
+      // Extract employee emails
+      const employeeEmails = employees.map(emp => emp.user_email);
+
+      // Add the employee emails to the client object
+      const clientData = user.toJSON(); // Convert Sequelize model instance to plain object
+      clientData.employeesInvited = employeeEmails;
+
+      return res.status(200).json(clientData);
+    } catch (error) {
+      console.log("error", error);
+      return res.status(500).json({ error: 'An error occurred while fetching the archived user', details: error.message });
+    }
+  })
+})
+
+
+exports.getSignedPdf = onRequest(async (req, res) => {
   cors(req, res, async () => {
     const authHeader = req.headers['authorization'];
     console.log("header", authHeader);  // Log the received authorization header for debugging
@@ -2537,58 +2791,58 @@ exports.getSignedPdf = onRequest(async(req, res) => {
 });
 
 
-exports.deleteUser = onRequest(async(req,res)=>{
-  cors(req,res,async()=>{
+exports.deleteUser = onRequest(async (req, res) => {
+  cors(req, res, async () => {
     const { id } = req.query;
 
     try {
       // Start a transaction
-    
-        const user = await users.findOne({ where: { id }});
-        if (!user) {
-          throw new Error('User not found');
-        }
-        const userEmail = user.dataValues.user_email
-        console.log("id",userEmail)
-        const pdfEmailIds = await pdf_email.findAll({ where: {userEmailFk:id },attributes: ['id'],});
-        const emailIds = pdfEmailIds.map(email => email.dataValues.id);
-        const labReports = await lab_report.findAll({
-          where: {
-            pdfEmailIdfk: {
-              [Op.in]: emailIds
-            }
-          },
-          attributes: ['id'], // Selecting only 'id' attribute
-        });
 
-        // Extracting and logging only the IDs from the lab report records
-        const labReportIds = labReports.map(report => report.id);
-        const labReportDataRecords = await labreport_data.findAll({
-          where: {
-            labReoprtFk: {
-              [Op.in]: labReportIds
-            }
-          },
-          attributes: ['id'], // Selecting only 'id' attribute
-        });
-  
-        // Extracting and logging only the IDs from the lab report data records
-        const labReoprtDataIds = labReportDataRecords.map(data => data.id);
-        const labReportCsvRecords = await labreport_csv.findAll({
-          where: {
-            labReoprtFk: {
-              [Op.in]: labReportIds
-            }
-          },
-          attributes: ['id'], // Selecting only 'id' attribute
-        });
-  
-        // Extracting and logging only the IDs from the lab report CSV records
-        const labReportCsvIds = labReportCsvRecords.map(csv => csv.id);
-         // Start transaction
+      const user = await users.findOne({ where: { id } });
+      if (!user) {
+        throw new Error('User not found');
+      }
+      const userEmail = user.dataValues.user_email
+      console.log("id", userEmail)
+      const pdfEmailIds = await pdf_email.findAll({ where: { userEmailFk: id }, attributes: ['id'], });
+      const emailIds = pdfEmailIds.map(email => email.dataValues.id);
+      const labReports = await lab_report.findAll({
+        where: {
+          pdfEmailIdfk: {
+            [Op.in]: emailIds
+          }
+        },
+        attributes: ['id'], // Selecting only 'id' attribute
+      });
+
+      // Extracting and logging only the IDs from the lab report records
+      const labReportIds = labReports.map(report => report.id);
+      const labReportDataRecords = await labreport_data.findAll({
+        where: {
+          labReoprtFk: {
+            [Op.in]: labReportIds
+          }
+        },
+        attributes: ['id'], // Selecting only 'id' attribute
+      });
+
+      // Extracting and logging only the IDs from the lab report data records
+      const labReoprtDataIds = labReportDataRecords.map(data => data.id);
+      const labReportCsvRecords = await labreport_csv.findAll({
+        where: {
+          labReoprtFk: {
+            [Op.in]: labReportIds
+          }
+        },
+        attributes: ['id'], // Selecting only 'id' attribute
+      });
+
+      // Extracting and logging only the IDs from the lab report CSV records
+      const labReportCsvIds = labReportCsvRecords.map(csv => csv.id);
+      // Start transaction
       const result = await sequelize.transaction(async (t) => {
-        
-       // Deleting records from labreport_data
+
+        // Deleting records from labreport_data
         const deleteData = await labreport_data.destroy({
           where: {
             labReoprtFk: {
@@ -2598,7 +2852,7 @@ exports.deleteUser = onRequest(async(req,res)=>{
           transaction: t
         });
 
-      //  Deleting records from labreport_csv
+        //  Deleting records from labreport_csv
         const deleteCsv = await labreport_csv.destroy({
           where: {
             labReoprtFk: {
@@ -2608,7 +2862,7 @@ exports.deleteUser = onRequest(async(req,res)=>{
           transaction: t
         });
 
-      //  Deleting records from lab_report
+        //  Deleting records from lab_report
         const deleteLabReport = await lab_report.destroy({
           where: {
             pdfEmailIdfk: {
@@ -2618,8 +2872,8 @@ exports.deleteUser = onRequest(async(req,res)=>{
           transaction: t
         });
 
-         // Deleting records from lab_report
-         const deletePdfEmail = await pdf_email.destroy({
+        // Deleting records from lab_report
+        const deletePdfEmail = await pdf_email.destroy({
           where: {
             userEmailFk: id
           },
@@ -2633,9 +2887,9 @@ exports.deleteUser = onRequest(async(req,res)=>{
           transaction: t
         });
 
-         // Log how many invited users were deleted (optional)
-    console.log(`${invitedUsersDeletion} invited users deleted.`);
-    
+        // Log how many invited users were deleted (optional)
+        console.log(`${invitedUsersDeletion} invited users deleted.`);
+
         const deleteUser = await users.destroy({
           where: {
             id: id
@@ -2644,33 +2898,33 @@ exports.deleteUser = onRequest(async(req,res)=>{
         });
         // return{deletePdfEmail}
 
-        return { deleteData, deleteCsv,deleteLabReport ,deletePdfEmail,invitedUsersDeletion,deleteUser};
+        return { deleteData, deleteCsv, deleteLabReport, deletePdfEmail, invitedUsersDeletion, deleteUser };
       });
 
       console.log("Deletion results:", result);
-        console.log("User ID:", user.id);
-        console.log("PDF Email IDs:", emailIds);
-        console.log("Lab Report IDs:", labReportIds);
-        console.log("Lab Report Data IDs:", labReoprtDataIds);
-        console.log("Lab Report CSV IDs:", labReportCsvIds)     
-  
+      console.log("User ID:", user.id);
+      console.log("PDF Email IDs:", emailIds);
+      console.log("Lab Report IDs:", labReportIds);
+      console.log("Lab Report Data IDs:", labReoprtDataIds);
+      console.log("Lab Report CSV IDs:", labReportCsvIds)
+
       return res.status(200).send({ message: 'User and all related records have been deleted.' });
     } catch (error) {
       console.error('Error during deletion:', error);
-     return res.status(500).send({ error: error.message || 'Internal server error' });
+      return res.status(500).send({ error: error.message || 'Internal server error' });
     }
   })
 })
 
-exports.getEmployeeClients = onRequest(async(req,res)=>{
-  cors(req,res,async()=>{
+exports.getEmployeeClients = onRequest(async (req, res) => {
+  cors(req, res, async () => {
     const authHeader = req.headers['authorization'];
     console.log("header", authHeader);  // Log the received authorization header for debugging
     if (!authHeader) {
       return res.sendStatus(401); // Return Unauthorized if no authorization header is present
     }
-      try {
-          // Decode and verify the JWT from the authorization header asynchronously
+    try {
+      // Decode and verify the JWT from the authorization header asynchronously
       const userDecode = await new Promise((resolve, reject) => {
         jwt.verify(authHeader, 'your_secret_key', (err, user) => {
           if (err) {
@@ -2680,40 +2934,40 @@ exports.getEmployeeClients = onRequest(async(req,res)=>{
           }
         });
       });
-     const loggedInEmail = userDecode.email
-    
-        // Find the user by email
-        const user = await users.findOne({
-          where: { user_email: loggedInEmail }
-        });
-    
-        if (!user) {
-          return res.status(404).json({ message: 'User not found' });
-        }
-    
-        // Find all records where this user was invited
-        const invitations = await users.findAll({
-          where: {
-            user_email: loggedInEmail,
-            invitedBy: {
-              [Op.ne]: null // Only get records where invitedBy is not null
-            }
-          },
-          attributes: ['invitedBy'] // Only return the invitedBy field
-        });
-    
-        // If no invitations found
-        if (!invitations.length) {
-          return res.status(200).json({ message: 'No invitations found', invitedByEmails: [] });
-        }
-    
-        // Extract the list of unique invitedBy emails
-        const invitedByEmails = invitations.map(invite => invite.invitedBy);
-    
-        return res.status(200).json({ invitedByEmails });
-      } catch (error) {
-        console.error('Error fetching invited by emails:', error.message);
-        return res.status(500).json({ message: 'An error occurred', error: error.message });
+      const loggedInEmail = userDecode.email
+
+      // Find the user by email
+      const user = await users.findOne({
+        where: { user_email: loggedInEmail }
+      });
+
+      if (!user) {
+        return res.status(404).json({ message: 'User not found' });
       }
+
+      // Find all records where this user was invited
+      const invitations = await users.findAll({
+        where: {
+          user_email: loggedInEmail,
+          invitedBy: {
+            [Op.ne]: null // Only get records where invitedBy is not null
+          }
+        },
+        attributes: ['invitedBy'] // Only return the invitedBy field
+      });
+
+      // If no invitations found
+      if (!invitations.length) {
+        return res.status(200).json({ message: 'No invitations found', invitedByEmails: [] });
+      }
+
+      // Extract the list of unique invitedBy emails
+      const invitedByEmails = invitations.map(invite => invite.invitedBy);
+
+      return res.status(200).json({ invitedByEmails });
+    } catch (error) {
+      console.error('Error fetching invited by emails:', error.message);
+      return res.status(500).json({ message: 'An error occurred', error: error.message });
+    }
   })
 })

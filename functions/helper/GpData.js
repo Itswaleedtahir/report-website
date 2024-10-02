@@ -315,7 +315,7 @@ const labReport = async (data, pdfEmailId, To) => {
  * @param {number} labReportId - The ID of the lab report these data entries belong to.
  * @returns {Promise<void>} - A promise that resolves when all operations are completed.
  */
-const labReoprtData = async (labDataArray, labReportId) => {
+const labReoprtData = async (labDataArray, labReportId,pdfEmailIdFk) => {
   try {
     console.log("Processing lab data:", labDataArray);
 
@@ -360,6 +360,7 @@ const labReoprtData = async (labDataArray, labReportId) => {
         lab_name,
         value,
         isPending,
+        pdfEmailIdFk:pdfEmailIdFk,
         refRangeFk: refRangeDataId // Use the refRangeDataId as a foreign key.
       });
     });
@@ -519,6 +520,40 @@ const logoExtraction = async (pdfPath, apiUrl) => {
   }
 };
 
+const coordinateExtraction = async (pdfUrl, apiUrl) => {
+  // Prepare JSON data with the file URL.
+  const data = JSON.stringify({
+    "file_url": pdfUrl
+  });
+
+  let config = {
+    method: 'post',
+    url: apiUrl,
+    headers: { 
+      'Content-Type': 'application/json' // Set header to application/json
+    },
+    data: data
+  };
+
+  try {
+    // Make an HTTP POST request to the specified API endpoint using the config.
+    const response = await axios.request(config);
+
+    // Check if the API response is valid and contains data.
+    if (response && response.data) {
+      console.log('Coordinates received from API:', response.data);
+      return { coordinates: response.data }; // Return the data received from the API.
+    } else {
+      console.log('No data returned from the coordinate extraction API');
+      return { coordinates: {} }; // Return an empty object if no data is received, to maintain consistency in return type.
+    }
+  } catch (error) {
+    // Log any errors encountered during the API call.
+    console.error('Error retrieving coordinates from API:', error.message);
+    return { coordinates: null }; // Return null to signify an error condition, simplifying error handling for the caller.
+  }
+};
+
 
 // const reformData = async (Data)=>{
 //     const formattedData = [];
@@ -557,7 +592,7 @@ const logoExtraction = async (pdfPath, apiUrl) => {
  * @param {string} email_to - Email identifier for lab report filtering.
  * @returns {Promise<object>} - A promise that resolves to the updated lab reports or an error message.
  */
-const findAllLabData = async (extractedData, email_to,newPdfUrl) => {
+const findAllLabData = async (extractedData, email_to,newPdfUrl ,pdfEmailId) => {
   try {
     console.log("dataaaa", extractedData);
     const Labreports = await Promise.all(extractedData.tests.map(async (name) => {
@@ -603,18 +638,19 @@ const findAllLabData = async (extractedData, email_to,newPdfUrl) => {
                 }
                 console.log("datttaaaaaa",report.dataValues.pdfEmailIdfk)
                 console.log("urlllllllllllll",newPdfUrl)
+                console.log("pdf new id",pdfEmailId)
                 const pdfEmailIdfk = report.dataValues.pdfEmailIdfk
                 // Perform update
-                await labData.update({ value: testData.value });
-                const pdfEmailRecord = await pdf_email.update({
-                  pdfPath:newPdfUrl
-                },
-                {
-                  where:{
-                    id:pdfEmailIdfk
-                  }
-                }
-              );
+                await labData.update({ value: testData.value ,pdfEmailIdFk:pdfEmailId});
+                // const pdfEmailRecord = await pdf_email.update({
+                //   pdfPath:newPdfUrl
+                // },
+                // {
+                //   where:{
+                //     id:pdfEmailIdfk
+                //   }
+                // }
+              // );
             
                 // Store updated data
                 const updatedData = { ...labData.dataValues };
@@ -658,5 +694,6 @@ module.exports = {
   findAllLabData,
   insertOrUpdateLabReport,
   logoExtraction,
-  UploadFile
+  UploadFile,
+  coordinateExtraction
 };
