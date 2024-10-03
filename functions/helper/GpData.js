@@ -69,7 +69,9 @@ const UplaodFile = async (pdfPath, data) => {
       const writeStream = file.createWriteStream({
         metadata: {
           contentType: 'application/pdf',
-        }
+        },
+        resumable: false,  // Set resumable to false to prevent retries
+        validation: false,
       });
 
       readStream.pipe(writeStream)
@@ -183,6 +185,7 @@ const PdfEmail = async (Received, pdfname, destination, To) => {
     const userEmailFk = user.id;
 
     // Create a new pdf_email record using the provided and fetched data.
+    console.log("pdf upload query,line 186")
     const pdfEmail = await pdf_email.create({
       email_to: To,
       receivedAt: Received,
@@ -212,6 +215,7 @@ const PdfEmail = async (Received, pdfname, destination, To) => {
  */
 const insertOrUpdateLabReport = async (extractedData, email_to) => {
   // Use map to transform each test into a promise that resolves to the test's existence check.
+  console.log("inserting and updating all labdata line  216")
   const labReportsPromises = extractedData.tests.map(async (test) => {
     console.log("Testing:", test);
     // Query the database to find matching lab report data for each test.
@@ -282,7 +286,7 @@ const labReport = async (data, pdfEmailId, To) => {
     if (!data || !pdfEmailId || !To) {
       throw new Error('Missing data for creating lab report');
     }
-
+    console.log("adding lab data in lab_report line 287")
     // Attempt to create a lab_report record with the provided data and link it to the specified pdf_email ID
     const labReport = await lab_report.create({
       protocolId: data.protocolId,
@@ -318,6 +322,8 @@ const labReport = async (data, pdfEmailId, To) => {
 const labReoprtData = async (labDataArray, labReportId,pdfEmailIdFk) => {
   try {
     console.log("Processing lab data:", labDataArray);
+
+    console.log("adding labreportdata in lab_report line 287")
 
     // Map to store processed combinations for reference range data, avoiding duplicate entries.
     const refRangeDataMap = new Map();
@@ -594,7 +600,7 @@ const coordinateExtraction = async (pdfUrl, apiUrl) => {
  */
 const findAllLabData = async (extractedData, email_to,newPdfUrl ,pdfEmailId) => {
   try {
-    console.log("dataaaa", extractedData);
+    console.log("finding all labdata line  598")
     const Labreports = await Promise.all(extractedData.tests.map(async (name) => {
       return lab_report.findAll({
         where: {

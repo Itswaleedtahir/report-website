@@ -445,10 +445,9 @@ exports.SendGridEmailListenerForEmailData = onRequest({
           const { message, datamade } = await insertOrUpdateLabReport(extractedData, toAddress)
           console.log("message", datamade)
           if (message === 'Add') {
-            const test = await findAllLabData(datamade, toAddress, destination, pdfEmailId)
-            const { message } = await insertOrUpdateLabReport(datamade, toAddress)
+            // const test = await findAllLabData(datamade, toAddress, destination, pdfEmailId)
+            // const { message } = await insertOrUpdateLabReport(datamade, toAddress)
             console.log("hereeee", message)
-            if (message === 'Add') {
               console.log("after update Add")
 
               //Dumping data into lab_Report table in db
@@ -462,12 +461,10 @@ exports.SendGridEmailListenerForEmailData = onRequest({
               const status = "sent";
 
               //Making csv saving into GDS and adding into DB
-              const csv = await MakeCsv(labReportId, datamade);
-              console.log("CSV: ", csv);
+              // const csv = await MakeCsv(labReportId, datamade);
+              // console.log("CSV: ", csv);
               console.log("Process completed")
-            } else {
-              console.log("Data after update already exist")
-            }
+            
           } else {
             console.log("Data already exists")
           }
@@ -1195,7 +1192,6 @@ exports.getLabReportNamesByEmail = onRequest(async (req, res) => {
   });
 });
 
-
 // This function sets up an HTTP endpoint to add a new admin user to the database.
 exports.addAdmin = onRequest(async (req, res) => {
   cors(req, res, async () => { // Enable CORS to handle cross-origin requests
@@ -1922,59 +1918,60 @@ exports.updateUserAccess = onRequest(async (req, res) => {
 
 // This function sets up an HTTP endpoint to retrieve a client's details based on their email address.
 exports.getClientByEmail = onRequest(async (req, res) => {
-  cors(req, res, async () => { // Enable CORS to handle cross-origin requests.
-    const { email } = req.body; // Extract the email from the request body.
+  cors(req, res, async () => {
+    const { email } = req.body; // Get the email from the query parameter instead of body for progressive searching
 
-    // Validate that the email parameter is provided in the request.
     if (!email) {
-      // Return a 400 Bad Request status if the email is not provided.
       return res.status(400).send({ error: 'Email parameter is required.' });
     }
 
     try {
-      // Attempt to find the user in the database using the provided email.
-      const user = await users.findOne({
+      // Search for all users whose emails start with the provided input
+      const Users = await users.findAll({
         where: {
-          user_email: email
+          user_email: {
+            [Sequelize.Op.like]: `${email}%` // Use LIKE operator for progressive search
+          }
         }
       });
 
-      const employees = await users.findAll({
-        where: {
-          invitedBy: user.user_email,
-          isEmployee: true
-        },
-        attributes: ['user_email'] // Only fetch the employee's email
-      });
-      // Extract employee emails
-      const employeeEmails = employees.map(emp => emp.user_email);
-
-      // Add the employee emails to the client object
-      const clientData = user.toJSON(); // Convert Sequelize model instance to plain object
-      clientData.employeesInvited = employeeEmails;
-
-      // Check if the user was found.
-      if (!user) {
-        // If no user is found, return a 404 Not Found status.
-        return res.status(404).send({ error: 'User not found.' });
+      if (Users.length === 0) {
+        return res.status(404).send({ error: 'No users found.' });
       }
 
-      // If the user is found, return the user details with a 200 OK status.
-      return res.status(200).send([clientData]);
+      // Prepare to collect data for each user and their employees
+      const result = await Promise.all(Users.map(async (user) => {
+        // Find employees invited by the current user
+        const employees = await users.findAll({
+          where: {
+            invitedBy: user.user_email,
+            isEmployee: true
+          },
+          attributes: ['user_email'] // Only fetch the employee's email
+        });
+
+        // Extract employee emails and add them to the user's data
+        const employeeEmails = employees.map(emp => emp.user_email);
+        const clientData = user.toJSON(); // Convert Sequelize model instance to plain object
+        clientData.employeesInvited = employeeEmails;
+
+        return clientData; // Return the user object with employees invited
+      }));
+
+      // Send all users with their invited employees
+      return res.status(200).send(result);
     } catch (error) {
-      // Log the error if there is an issue retrieving the user.
-      console.error('Failed to retrieve user:', error);
-      // Return a 500 Internal Server Error if an exception occurs during the database query.
-      res.status(500).send({ error: 'Failed to retrieve user.' });
+      console.error('Failed to retrieve users:', error);
+      res.status(500).send({ error: 'Failed to retrieve users.' });
     }
-  })
+  });
 });
 
 // This function sets up an HTTP endpoint to retrieve employee details by their email.
 // It searches for all users they have invited as well as their own record.
 exports.getEmployeeByEmail = onRequest(async (req, res) => {
-  cors(req, res, async () => { // Enable CORS to allow handling of cross-origin requests.
-    const { email } = req.body; // Extract the email from the request body.
+  cors(req, res, async () => { // Enable CORS to handle cross-origin requests.
+    const { email } = req.body; // Use query parameter for progressive searching
 
     // Check if the email parameter is provided.
     if (!email) {
@@ -1983,10 +1980,12 @@ exports.getEmployeeByEmail = onRequest(async (req, res) => {
     }
 
     try {
-      // Attempt to find all users who were invited by the employee with the given email.
+      // Search for all users who were invited by the employee with the given email.
       const usersInvitedBy = await users.findAll({
         where: {
-          invitedBy: email,
+          invitedBy: {
+            [Sequelize.Op.like]: `${email}%` // Use the LIKE operator for progressive matching
+          },
           isEmployee: true // Ensure that only employees are considered.
         }
       });
@@ -1995,21 +1994,23 @@ exports.getEmployeeByEmail = onRequest(async (req, res) => {
 
       if (usersInvitedBy.length > 0) {
         // If any users were invited by the employee, use this list as the result.
-        result = usersInvitedBy;
+        result = usersInvitedBy.map(user => user.toJSON()); // Convert Sequelize models to plain objects
       } else {
         // If no invited users are found, search for the employee themselves by their email.
-        const userByEmail = await users.findOne({
+        const userByEmail = await users.findAll({
           where: {
-            user_email: email,
+            user_email: {
+              [Sequelize.Op.like]: `${email}%`, // Use the LIKE operator for progressive matching
+            },
             isEmployee: true
           }
         });
 
-        // Ensure that a single user result is also returned as an array for consistency.
-        result = userByEmail ? [userByEmail] : [];
+        // Ensure that the result is an array (even if it's a single user or empty).
+        result = userByEmail.map(user => user.toJSON());
       }
 
-      // If no result is found (neither invited users nor the user themselves), return a 404 Not Found.
+      // If no result is found (neither invited users nor the employee themselves), return a 404 Not Found.
       if (result.length === 0) {
         return res.status(404).send({ error: 'User not found.' });
       }
@@ -2018,18 +2019,18 @@ exports.getEmployeeByEmail = onRequest(async (req, res) => {
       res.status(200).send(result);
     } catch (error) {
       // Log any errors encountered during the retrieval process.
-      console.error('Failed to retrieve user:', error);
+      console.error('Failed to retrieve users:', error);
       // Return a 500 Internal Server Error if there is an exception.
-      res.status(500).send({ error: 'Failed to retrieve user.' });
+      res.status(500).send({ error: 'Failed to retrieve users.' });
     }
-  })
+  });
 });
 
 // This function sets up an HTTP endpoint to delete an employee from the database based on their email.
 exports.deleteEmployee = onRequest(async (req, res) => {
   cors(req, res, async () => { // Enable CORS to handle cross-origin requests.
     try {
-      const { email } = req.body; // Extract the email from the request body.
+      const { email,invitedBy} = req.body; // Extract the email from the request body.
 
       // Check if the email parameter is provided.
       if (!email) {
@@ -2040,8 +2041,8 @@ exports.deleteEmployee = onRequest(async (req, res) => {
       // Attempt to delete the user from the database who matches the email and is an employee.
       const deleteUserEmail = await users.destroy({
         where: {
-          user_email: email,
-          isEmployee: true
+          isEmployee: true,
+          invitedBy:invitedBy
         }
       });
 
@@ -2348,7 +2349,6 @@ exports.getLabReportNamesByEmailForSearch = onRequest(async (req, res) => {
   });
 });
 
-
 exports.signPdf = onRequest({
   timeoutSeconds: 3600, // Set the function timeout to 1 hour
 },async (req, res) => {
@@ -2388,12 +2388,12 @@ exports.signPdf = onRequest({
       const cordinate = {
         "output": {
             "date_coords": [
-                322,
-                1863
+              563.7082214355469,
+              850.0
             ],
             "sign_coords": [
-                378,
-                1818
+              199.13104248046875,
+              840.0
             ]
         }
     }
@@ -2557,7 +2557,6 @@ exports.signWebhook = onRequest({
   });
 });
 
-
 exports.archiveUser = onRequest(async (req, res) => {
   cors(req, res, async () => { // Enable CORS to handle cross-origin requests.
     const { email, isArchive } = req.body; // Extract email and desired access level from the request body.
@@ -2689,48 +2688,55 @@ exports.getPdfsForEmail = onRequest(async (req, res) => {
 
 exports.getArchiveUsersOnEmail = onRequest(async (req, res) => {
   cors(req, res, async () => {
-    const userEmail = req.body.email; // Get email from the request body
+    const userEmail = req.body.email; // Get email from the query parameter
 
     try {
       if (!userEmail) {
         return res.status(400).json({ error: 'Email is required' });
       }
 
-      const user = await users.findOne({
+      // Find all users whose email matches the provided input and are archived
+      const Users = await users.findAll({
         where: {
-          user_email: userEmail,
+          user_email: {
+            [Sequelize.Op.like]: `${userEmail}%` // Adjust to use LIKE for progressive searching
+          },
           isArchived: true
         }
       });
 
-      if (!user) {
-        return res.status(404).json({ error: 'No archived user found with the provided email' });
+      if (Users.length === 0) {
+        return res.status(404).json({ error: 'No archived users found with the provided email' });
       }
 
-      // Fetch employees invited by this client
-      const employees = await users.findAll({
-        where: {
-          invitedBy: user.user_email,
-          isEmployee: true
-        },
-        attributes: ['user_email'] // Only fetch the employee's email
-      });
+      // Prepare the final result including employees invited by each user
+      const result = await Promise.all(Users.map(async (user) => {
+        // Fetch employees invited by this archived user
+        const employees = await users.findAll({
+          where: {
+            invitedBy: user.user_email,
+            isEmployee: true
+          },
+          attributes: ['user_email'] // Only fetch the employee's email
+        });
 
-      // Extract employee emails
-      const employeeEmails = employees.map(emp => emp.user_email);
+        // Extract employee emails
+        const employeeEmails = employees.map(emp => emp.user_email);
 
-      // Add the employee emails to the client object
-      const clientData = user.toJSON(); // Convert Sequelize model instance to plain object
-      clientData.employeesInvited = employeeEmails;
+        // Add the employee emails to the user object
+        const clientData = user.toJSON(); // Convert Sequelize model instance to plain object
+        clientData.employeesInvited = employeeEmails;
 
-      return res.status(200).json(clientData);
+        return clientData; // Return the user object with employees invited
+      }));
+
+      return res.status(200).json(result); // Send all the users with their invited employees
     } catch (error) {
       console.log("error", error);
-      return res.status(500).json({ error: 'An error occurred while fetching the archived user', details: error.message });
+      return res.status(500).json({ error: 'An error occurred while fetching the archived users', details: error.message });
     }
-  })
-})
-
+  });
+});
 
 exports.getSignedPdf = onRequest(async (req, res) => {
   cors(req, res, async () => {
@@ -2789,7 +2795,6 @@ exports.getSignedPdf = onRequest(async (req, res) => {
     }
   });
 });
-
 
 exports.deleteUser = onRequest(async (req, res) => {
   cors(req, res, async () => {
