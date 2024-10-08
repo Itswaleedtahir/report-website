@@ -8,21 +8,37 @@ const { users, pdf_email, labreport_data, lab_report, labreport_csv, ref_range_d
 const { where } = require('sequelize');
 
 // Create the credentials object from environment variables
-const googleCredentials = {
-  type: process.env.GCLOUT_TYPE,
-  project_id: process.env.GCLOUD_PROJECT_ID,
-  private_key_id: process.env.GCLOUD_PRIVATE_KEY_ID,
-  private_key: process.env.GCLOUD_PRIVATE_KEY,
-  client_email: process.env.GCLOUD_CLIENT_EMAIL,
-  client_id: process.env.GCLOUD_CLIENT_ID,
-  auth_uri: process.env.GCLOUD_AUTH_URI,
-  token_uri: process.env.GCLOUD_TOKEN_URI,
-  auth_provider_x509_cert_url: process.env.GCLOUD_AUTH_PROVIDER_X509_CERT_URL,
-  client_x509_cert_url: process.env.GCLOUD_CLIENT_X509_CERT_URL,
-  universe_domain: process.env.GCLOUD_UNIVERSE_DOMAIN
-};
+// const googleCredentials = {
+//   type: process.env.GCLOUT_TYPE,
+//   project_id: process.env.GCLOUD_PROJECT_ID,
+//   private_key_id: process.env.GCLOUD_PRIVATE_KEY_ID,
+//   private_key: process.env.GCLOUD_PRIVATE_KEY,
+//   client_email: process.env.GCLOUD_CLIENT_EMAIL,
+//   client_id: process.env.GCLOUD_CLIENT_ID,
+//   auth_uri: process.env.GCLOUD_AUTH_URI,
+//   token_uri: process.env.GCLOUD_TOKEN_URI,
+//   auth_provider_x509_cert_url: process.env.GCLOUD_AUTH_PROVIDER_X509_CERT_URL,
+//   client_x509_cert_url: process.env.GCLOUD_CLIENT_X509_CERT_URL,
+//   universe_domain: process.env.GCLOUD_UNIVERSE_DOMAIN
+// };
+// const googleCredentials = {
+//   type: 'service_account',
+//   project_id: process.env.GCLOUD_PROJECT_ID,
+//   private_key_id: process.env.GCLOUD_PRIVATE_KEY_ID,
+//   private_key: process.env.GCLOUD_PRIVATE_KEY,
+//   client_email: process.env.GCLOUD_CLIENT_EMAIL,
+//   client_id: process.env.GCLOUD_CLIENT_ID,
+//   auth_uri: process.env.GCLOUD_AUTH_URI,
+//   token_uri: process.env.GCLOUD_TOKEN_URI,
+//   auth_provider_x509_cert_url: process.env.GCLOUD_AUTH_PROVIDER_X509_CERT_URL,
+//   client_x509_cert_url: process.env.GCLOUD_CLIENT_X509_CERT_URL,
+//   universe_domain: process.env.GCLOUD_UNIVERSE_DOMAIN,
+// };
 
-const storage = new Storage({ projectId: 'gp-data-1-0', credentials: googleCredentials });
+// console.log("Credentials Object:", googleCredentials);
+
+
+// const storage = new Storage({ projectId: 'gp-data-1-0', credentials: googleCredentials });
 
 /**
  * Uploads a PDF file to Google Cloud Storage and handles related file operations.
@@ -33,6 +49,26 @@ const storage = new Storage({ projectId: 'gp-data-1-0', credentials: googleCrede
  * @throws {Error} - Throws an error if the file cannot be uploaded or post-upload operations fail.
  */
 const UplaodFile = async (pdfPath, data) => {
+
+  const googleCredentials = {
+    type: 'service_account',
+    project_id: 'gp-data-1-0',
+    private_key_id: '79c72abd30e39d5c2459606246bb200fc0e950a2',
+    private_key: "-----BEGIN PRIVATE KEY-----\nMIIEvgIBADANBgkqhkiG9w0BAQEFAASCBKgwggSkAgEAAoIBAQCH99EaF/wXiceP\ni00TGXrW8JlQA0y/ONg2zsG8aK+9shLKFqZBiDmed9itWOUlHMwIfi7UyiRyyftE\ndbcs170jHSyrhr7RL64Z5aE1sA4eUKQYl2ZE1EnbT2lyCa98TuQlcRtyyuMcz23b\neVChRFeD4IZciJYvWlhTC0yPEl42rE6XzhZr59aVuad12Gu1eVIanI7gQodhnIrp\n+RXvROq8uZWhcpmxs5v0jx9gUJzLtooEF+Yfw0pu1f+ILoecWFX/Tp+2ciJ53TwE\nR1DLG73PPFop+KndudHR41oW2QZ6LSdEwZQ7YTu/WPRnNg3fHwwkTSPrBIrabgsh\nKCsrOeO5AgMBAAECggEAA71y9/gnV/492hKWJ0jiQ9cN/+ElW2sHfy4drrkaS293\nvELA+5NmaAKKguMro23o5Vto3kjPVZp9d0Rof7A8Ae3M+KIOAzr1O6hhEF+0QGHO\nD7tGEILejgzU8lJ2oaavDczFjo6VjnQcuhv6oNhRyB0qaPwcqyGzBVltrM+lKIpi\nIqBAnGXZcWrMfRCAaRLjMnzsdALIIJTxHKbZyesT2sWOdbFrHse1960Z1mSh6z3I\n4j/XaewwLmOEk4a3tZF/YR6P2RaeDyKl8LnhJ2JdjiJt+rMxc62QEQ4u5b0Jv6pY\nAqNw4qd4o5ftEBYGG1B1BInYcFr70CoWnUCnNy09QQKBgQC7b2NwR+Ett1CHGtZJ\n2XNuCTjPpwdZSeTx53PMwhqbgPOQ8Q5vxBfkDyjGMaUmfMvBylyAxNv5vDThlu0g\nKp1dSxVycL/diTBOvrl1FYCh7GKUGilw2frkbLuN+Nxz6CwBUv++jXFRKChKakEw\nMIY6FAOJkwcbbNbSnl7nu0DReQKBgQC5tLmkolwu555jFuANxDG7qRdCkrFaXAmC\nVZhUUMNow1/tuyXgzRIl3L1JBhVQlmCvSU2fseejQ8sCL2/p9/teMyhiD3K2G9Wb\ngqe9FLgj+YbgthzMB49qFeWfQ/EPUdI8nXDKsJo5z3IhpXeIpdYsotkR/Kpy4V8K\nW2ZmghFUQQKBgH3QVCgvJ5h/Pz+hJQwnOZM3/3lrfcRSlKpIGXPtKt0M3vGAzZb6\nQqsj/dOjyV6fUEpBonwRKDNnQPvYSk1YLY9M8hWCV1fGWbXR0j0kdNa8DKOrN/v3\nZbDkx7SRwrDOvJMa+m4XFWRLl1f0INPPDpp3irRTC+c91KlGAyB7khPJAoGBALO5\nZlkhENoMK0t23gw0rnUR5oL1eVMb89ABitU+/H8tZm+rSbNQhJnEEiTUEFjX0GaU\nKN2+zZFCkPxicIsdBldaZ2DP1pLMSWShhDkIDlYyrghX93K2dmOTIZGLrYbIBxHG\nxVxEol4EmE5b112WMbstN6uivktENjjN0EKw6piBAoGBAIVcVqhBk68/zoOZ4ltS\nSCe/Sb520+P8sdaUWxCeXS8KH+982fvOXxOe9AvzYd/Ko5vInqeUlTD9wBeTzdIY\nuufgvo4W4wKL3y5gdNosAPqbLbTXA7Fj3QnfNlVtqnrshSZBPATQ3ok+WCJMaLpp\nQsJdXWCsVEOmOg1YGfrn1ZXG\n-----END PRIVATE KEY-----\n",
+    client_email: 'gpdata@gp-data-1-0.iam.gserviceaccount.com',
+    client_id: '109836118774191843916',
+    auth_uri: 'https://accounts.google.com/o/oauth2/auth',
+    token_uri: 'https://oauth2.googleapis.com/token',
+    auth_provider_x509_cert_url: 'https://www.googleapis.com/oauth2/v1/certs',
+    client_x509_cert_url: 'https://www.googleapis.com/robot/v1/metadata/x509/gpdata%40gp-data-1-0.iam.gserviceaccount.com',
+    universe_domain: 'googleapis.com',
+  };
+  
+  
+  console.log("Credentials Object:", googleCredentials);
+  
+  
+  const storage = new Storage({ projectId: 'gp-data-1-0', credentials: googleCredentials });
   console.log("PDF Path:", pdfPath);
   console.log('File size:', fs.statSync(pdfPath).size, 'bytes');
 
@@ -55,7 +91,6 @@ const UplaodFile = async (pdfPath, data) => {
   const sanitizedTimePoint = timePoint.replace(/[^a-zA-Z0-9]/g, '_');
   const timestamp = new Date().toISOString().replace(/[-:.]/g, "").replace("T", "_").replace("Z", "");
   const pdfName = `${sanitizedProtocolId}.${sanitizedSubjectId}.${sanitizedInvestigator}.${sanitizedTimePoint}.${timestamp}.pdf`;
-
   // Define the storage destination.
   const bucketName = 'gpdata01';
   const destination = `pdf/${pdfName}`;
@@ -98,6 +133,25 @@ const UplaodFile = async (pdfPath, data) => {
 };
 
 const UploadFile = async (pdfUrl, data) => {
+  const googleCredentials = {
+    type: 'service_account',
+    project_id: 'gp-data-1-0',
+    private_key_id: '79c72abd30e39d5c2459606246bb200fc0e950a2',
+    private_key: "-----BEGIN PRIVATE KEY-----\nMIIEvgIBADANBgkqhkiG9w0BAQEFAASCBKgwggSkAgEAAoIBAQCH99EaF/wXiceP\ni00TGXrW8JlQA0y/ONg2zsG8aK+9shLKFqZBiDmed9itWOUlHMwIfi7UyiRyyftE\ndbcs170jHSyrhr7RL64Z5aE1sA4eUKQYl2ZE1EnbT2lyCa98TuQlcRtyyuMcz23b\neVChRFeD4IZciJYvWlhTC0yPEl42rE6XzhZr59aVuad12Gu1eVIanI7gQodhnIrp\n+RXvROq8uZWhcpmxs5v0jx9gUJzLtooEF+Yfw0pu1f+ILoecWFX/Tp+2ciJ53TwE\nR1DLG73PPFop+KndudHR41oW2QZ6LSdEwZQ7YTu/WPRnNg3fHwwkTSPrBIrabgsh\nKCsrOeO5AgMBAAECggEAA71y9/gnV/492hKWJ0jiQ9cN/+ElW2sHfy4drrkaS293\nvELA+5NmaAKKguMro23o5Vto3kjPVZp9d0Rof7A8Ae3M+KIOAzr1O6hhEF+0QGHO\nD7tGEILejgzU8lJ2oaavDczFjo6VjnQcuhv6oNhRyB0qaPwcqyGzBVltrM+lKIpi\nIqBAnGXZcWrMfRCAaRLjMnzsdALIIJTxHKbZyesT2sWOdbFrHse1960Z1mSh6z3I\n4j/XaewwLmOEk4a3tZF/YR6P2RaeDyKl8LnhJ2JdjiJt+rMxc62QEQ4u5b0Jv6pY\nAqNw4qd4o5ftEBYGG1B1BInYcFr70CoWnUCnNy09QQKBgQC7b2NwR+Ett1CHGtZJ\n2XNuCTjPpwdZSeTx53PMwhqbgPOQ8Q5vxBfkDyjGMaUmfMvBylyAxNv5vDThlu0g\nKp1dSxVycL/diTBOvrl1FYCh7GKUGilw2frkbLuN+Nxz6CwBUv++jXFRKChKakEw\nMIY6FAOJkwcbbNbSnl7nu0DReQKBgQC5tLmkolwu555jFuANxDG7qRdCkrFaXAmC\nVZhUUMNow1/tuyXgzRIl3L1JBhVQlmCvSU2fseejQ8sCL2/p9/teMyhiD3K2G9Wb\ngqe9FLgj+YbgthzMB49qFeWfQ/EPUdI8nXDKsJo5z3IhpXeIpdYsotkR/Kpy4V8K\nW2ZmghFUQQKBgH3QVCgvJ5h/Pz+hJQwnOZM3/3lrfcRSlKpIGXPtKt0M3vGAzZb6\nQqsj/dOjyV6fUEpBonwRKDNnQPvYSk1YLY9M8hWCV1fGWbXR0j0kdNa8DKOrN/v3\nZbDkx7SRwrDOvJMa+m4XFWRLl1f0INPPDpp3irRTC+c91KlGAyB7khPJAoGBALO5\nZlkhENoMK0t23gw0rnUR5oL1eVMb89ABitU+/H8tZm+rSbNQhJnEEiTUEFjX0GaU\nKN2+zZFCkPxicIsdBldaZ2DP1pLMSWShhDkIDlYyrghX93K2dmOTIZGLrYbIBxHG\nxVxEol4EmE5b112WMbstN6uivktENjjN0EKw6piBAoGBAIVcVqhBk68/zoOZ4ltS\nSCe/Sb520+P8sdaUWxCeXS8KH+982fvOXxOe9AvzYd/Ko5vInqeUlTD9wBeTzdIY\nuufgvo4W4wKL3y5gdNosAPqbLbTXA7Fj3QnfNlVtqnrshSZBPATQ3ok+WCJMaLpp\nQsJdXWCsVEOmOg1YGfrn1ZXG\n-----END PRIVATE KEY-----\n",
+    client_email: 'gpdata@gp-data-1-0.iam.gserviceaccount.com',
+    client_id: '109836118774191843916',
+    auth_uri: 'https://accounts.google.com/o/oauth2/auth',
+    token_uri: 'https://oauth2.googleapis.com/token',
+    auth_provider_x509_cert_url: 'https://www.googleapis.com/oauth2/v1/certs',
+    client_x509_cert_url: 'https://www.googleapis.com/robot/v1/metadata/x509/gpdata%40gp-data-1-0.iam.gserviceaccount.com',
+    universe_domain: 'googleapis.com',
+  };
+  
+  
+  console.log("Credentials Object:", googleCredentials);
+  
+  
+  const storage = new Storage({ projectId: 'gp-data-1-0', credentials: googleCredentials });
   console.log("insdie uplaod", pdfUrl, data)
   const newName = data.name;
 
