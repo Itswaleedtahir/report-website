@@ -7,7 +7,7 @@ const { v4: uuidv4 } = require('uuid');
 const cors = require("cors")({ origin: true });
 const sgMail = require('@sendgrid/mail');
 const { Op, Sequelize } = require("sequelize");
-const { UplaodFile, PdfEmail, labReport, labReoprtData, MakeCsv, pdfProcessor, findAllLabData, insertOrUpdateLabReport, logoExtraction, UploadFile,coordinateExtraction } = require("./helper/GpData");
+const { UplaodFileTemp, PdfEmail, labReport, labReoprtData, MakeCsv, pdfProcessor, findAllLabData, insertOrUpdateLabReport, logoExtraction, UploadFile,coordinateExtraction } = require("./helper/GpData");
 const { users, admin, pdf_email, labreport_data, lab_report, labreport_csv, ref_range_data, signedPdfs } = require("./models/index");
 const fs = require('fs');
 const sequelize = require('./config/db'); // Import the configured instance
@@ -15,8 +15,25 @@ const { PDFDocument } = require('pdf-lib');
 const signwell = require('@api/signwell');
 const path = require('path');
 const os = require('os');
-
+// const Queue = require('bull');
 sgMail.setApiKey('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');
+
+const { Queue, Worker, QueueScheduler } = require('bullmq');
+const IORedis = require('ioredis');
+
+const redisConfig = {
+  host: 'redis-18209.c326.us-east-1-3.ec2.redns.redis-cloud.com',
+  port: 18209,
+  password: 'ZHgNfkQhZSFExZwCp52swgzqe6kQ6cKy',
+  maxRetriesPerRequest: null // Disable automatic retries
+};
+
+// Create a Redis client
+const redisClient = new IORedis(redisConfig);
+async function addJobToRedis(data) {
+  await redisClient.rpush('pdfJobQueue', JSON.stringify(data));
+  console.log('Job added to Redis:', data);
+}
 
 
 //Testing function for debugging
@@ -188,7 +205,7 @@ exports.test = onRequest(async (req, res) => {
 
   // Extract PDF base64 strings
   const pdfs = extractPDFs(emailContent);
-  console.log("pdfs", pdfs)
+  // console.log("pdfs", pdfs)
   // Path to the uploads directory
   const uploadsDir = path.join(__dirname, 'uploads');
 
@@ -250,376 +267,119 @@ function extractPDFAttachments(email) {
 
   return attachments;
 }
-const extractData = (data, logo) => {
-  if (!Array.isArray(data)) {
-    console.error('Invalid input: data is not an array');
-    return;  // or throw an error, or handle this case as needed
-  }
 
-  const tests = data.filter(item => item.type === "Tests").map(test => {
-
-    // Assuming that the properties are nested arrays, flatten them first
-    const properties = test.properties.flat(); // Flatten the nested arrays
-
-    const labTest = properties.find(prop => prop.type === "Test");
-    const result = properties.find(prop => prop.type === "Result");
-
-    // Find the first refRange with a length less than or equal to 30 characters
-    const refRange = properties.filter(prop => prop.type === "Ref_Range")
-      .find(prop => prop.mentionText.length <= 30);
-
-    return {
-      lab_provider: logo.lab_name || "Medpace",
-      lab_name: labTest ? labTest.mentionText : 'Unknown',
-      value: result ? result.mentionText : 'Pending',
-      refValue: refRange ? refRange.mentionText : 'N/A' // Handle missing reference range gracefully
-    };
-  });
-
-  return {
-    protocolId: data.find(item => item.type === "protocolId")?.mentionText || 'Unknown',
-    investigator: data.find(item => item.type === "investigator")?.mentionText || 'Unknown',
-    subjectId: data.find(item => item.type === "subjectId")?.mentionText || 'Unknown',
-    dateOfCollection: data.find(item => item.type === "dateOfCollection")?.mentionText || 'Unknown',
-    timePoint: data.find(item => item.type === "timePoint")?.mentionText || 'Unknown',
-    timeOfCollection: data.find(item => item.type === "Time_of_Collecton")?.mentionText || 'Unknown',
-    tests: tests
-  };
-};
-
-function cleanTestData(data) {
-  // Iterate through tests using a for loop
-  for (let i = 0; i < data.tests.length; i++) {
-    let test = data.tests[i];
-
-    // Remove alphabetic characters from value if not "Pending"
-    if (test.value !== "Pending") {
-      test.value = test.value.replace(/[a-zA-Z]/g, '').trim();
-    }
-
-    // Check refValue length and remove if too long
-    if (test.refValue && test.refValue.length > 30) {
-      console.log(`Removing long refValue: ${test.refValue}`);
-      delete test.refValue; // This will remove the refValue field from the test
-    }
-  }
-
-  return data;
-}
-
-// This function sets up a listener for SendGrid email webhook events and processes PDF attachments.
+// Cloud Function for processing email data
 exports.SendGridEmailListenerForEmailData = onRequest({
-  timeoutSeconds: 3600, // Set the function timeout to 1 hour
-  memory: "1GiB", // Allocate 1 GiB of memory to the function
-  // maxInstances: 10  // Increase max instances as needed
+  timeoutSeconds: 3600,
+  memory: "1GiB",
 }, async (req, res) => {
+  let responseSent = false; // Flag to track if the response is sent
+
   cors(req, res, async () => {
     try {
-    res.status(200).send("pdf done")
-      // Convert the buffer to a UTF-8 string
+
+      res.status(200).send("pdf done"); // Initial response
       const bufferDataString = req.body.toString('utf8');
-
-      // Split the email data assuming it's multipart
       let parts = bufferDataString.split("--xYzZY");
+      // Regular expression to find an email within the content
+// Regular expression to find the 'to' email in the 'Content-Disposition' section of a forwarded message
 
-      // Initialize variables to store extracted data
-      let toAddress = "";
-      let fromAddress = "";
-      let DateReceivedEmail = "";
 
-      // Regular expressions to match 'To' and 'From' addresses
+    
+      let toAddress = "", fromAddress = "", DateReceivedEmail = "";
+
+      // Regex patterns and extraction logic
       const toPattern = /To: (.*)\r\n/;
       const fromPattern = /From: (.*)\r\n/;
       const DatePattern = /Date: (.*)\r\n/;
 
-      // Extract 'To' and 'From' addresses
+      // Extracting addresses
       const toMatch = parts.find(part => toPattern.test(part));
-      if (toMatch) {
-        toAddress = toMatch.match(toPattern)[1].trim();
-      }
-
+      // console.log("tomatch",toMatch)
+      if (toMatch) toAddress = toMatch.match(toPattern)[1].trim();
       const fromMatch = parts.find(part => fromPattern.test(part));
-      if (fromMatch) {
-        fromAddress = fromMatch.match(fromPattern)[1].trim();
-      }
-
+      // console.log("fromMatch",fromMatch)
+      if (fromMatch) fromAddress = fromMatch.match(fromPattern)[1].trim();
       const DateReceived = parts.find(part => DatePattern.test(part));
-      if (DateReceived) {
-        DateReceivedEmail = DateReceived.match(DatePattern)[1].trim();
-      }
-
-      let attachments
+      if (DateReceived) DateReceivedEmail = DateReceived.match(DatePattern)[1].trim();
+      let attachments;
       if (fromAddress.includes("@outlook.com")) {
-        // Regular expression to match email addresses
-        const emailRegex = /[\w.-]+@[\w.-]+\.\w+/g;
-
-        // Find all matches in the text
-        const toTheSender = toAddress.match(emailRegex);
-        toAddress = toTheSender[0]
-        console.log("toaddress", toTheSender[0])
-
-        const FromTheSender = fromAddress.match(emailRegex);
-        fromAddress = FromTheSender[0]
-        console.log("toaddress", FromTheSender[0])
-
-
-        // Extract PDF base64 strings
+        const emailRegex = /<([^>]+)>|([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})/; // Regex to extract email within angle brackets or plain email
+        console.log("to", toAddress);
+        const match = toAddress.match(emailRegex);
+        toAddress = match ? (match[1] || match[2]) : null; // Extract the email if a match is found
+        
+        if (toAddress) {
+            console.log("Valid email:", toAddress);
+        } else {
+            console.log("Invalid email format.");
+        }
+        // Extract and handle attachments
         attachments = extractPDFs(bufferDataString);
       } else {
         attachments = extractPDFAttachments(bufferDataString);
       }
-      // toAddress = toAddress.replace('client.', '')
-      // // Prepare response or further processing
-      let response = {
-        to: toAddress,
-        from: fromAddress,
-        DateReceivedEmail: DateReceivedEmail,
-        attachments: attachments
-      };
-
-
-      // Process each PDF attachment
-      // console.log("attachements", attachments)
-      console.log("attachements count", attachments.length)
-
-      // return res.status(200).send("finish")
-      for (const attachment of attachments) {
-        // const results = await Promise.all(attachments.map(async (attachment) => {
-        console.log("pdf", attachment)
-        const pdfBuffer = Buffer.from(attachment.base64Content, 'base64');
-
-        // Generate a timestamp-based filename
-        const timestamp = new Date().getTime(); // Get current time in milliseconds
-        const filename = `output-${timestamp}.pdf`;
-
-        // Define the path to save the PDF
-        const uploadsDir = path.join(__dirname, 'uploads');
-        const pdfPath = path.join(uploadsDir, filename);
-
-        // Ensure the uploads directory exists
-        fs.mkdirSync(uploadsDir, { recursive: true });
-        // Write the binary data to a PDF file
-        fs.writeFileSync(pdfPath, pdfBuffer);
-        // Example: Print the extracted data
-        console.log("To:", toAddress);
-        console.log("From:", fromAddress);
-        console.log("Attachments:", attachment);
-        console.log("Date,", DateReceivedEmail)
-        console.log("path", pdfPath)
-        const AccessCheck = await users.findOne({ where: { user_email: toAddress } })
-        console.log("Access", AccessCheck)
-        if (AccessCheck.dataValues.access === 'Resume') {
-
-          const apiUrl = 'https://gpdataservices.com/process-pdf/'; // API Endpoint for Google document AI for processing the PDF's
-          const logoUrl = 'https://gpdataservices.com/ext-logo/' // API Endpoint for extracting Logo from the pdf's
-          const { logo } = await logoExtraction(pdfPath, logoUrl)
-          const { data } = await pdfProcessor(pdfPath, apiUrl)
-
-          if (!Array.isArray(data)) {
-            console.error("Failed to extract data for:", pdfPath);
-            continue; // This will skip the remaining code in the loop and move to the next iteration
-          }
-          // Extract and map data from the parsed JSON response
-
-
-          let extractedData = extractData(data, logo);
-
-
-
-          extractedData = cleanTestData(extractedData);
-          // console.log("cleandddd",cleand)
-          // return
-
-          // Call function to upload file and get necessary data
-          const { pdfname, destination } = await UplaodFile(pdfPath, extractedData);
-          const pdfURL = `${process.env.STORAGE_URL}${destination}`;
-          console.log("URL: ", pdfURL);
-
-          //Calling function to dump the data in pdf_email table 
-          const { pdfEmailId } = await PdfEmail(DateReceivedEmail, pdfname, destination, toAddress);
-
-          //Checking if data is repeating
-          await findAllLabData(extractedData, toAddress, destination, pdfEmailId)
-
-          //Updating the data if already exist
-          const { message, datamade } = await insertOrUpdateLabReport(extractedData, toAddress)
-          console.log("message", datamade)
-          if (message === 'Add') {
-            // const test = await findAllLabData(datamade, toAddress, destination, pdfEmailId)
-            // const { message } = await insertOrUpdateLabReport(datamade, toAddress)
-            console.log("hereeee", message)
-              console.log("after update Add")
-
-              //Dumping data into lab_Report table in db
-              const { labReportId } = await labReport(datamade, pdfEmailId, toAddress);
-              // Use extracted test data for lab report entries
-              const labdata = datamade.tests;
-              console.log("data", labdata)
-
-              //Dumping data into DB againt labreportdatta table
-              const labreportEntry = await labReoprtData(labdata, labReportId, pdfEmailId);
-              const status = "sent";
-
-              //Making csv saving into GDS and adding into DB
-              // const csv = await MakeCsv(labReportId, datamade);
-              // console.log("CSV: ", csv);
-              console.log("Process completed")
-            
-          } else {
-            console.log("Data already exists")
-          }
-        } else if (AccessCheck.dataValues.access === 'Paused') {
-          console.log("User access is paused")
-        } else {
-          console.log("not found")
-        }
+      function extractForwardedEmail(content) {
+        const regex = /Content-Disposition: form-data; name="to"\s+([^\s]+)/;
+        const match = content.match(regex);
+        return match ? match[1] : null;
       }
-      // attachments.forEach(async (attachment) => {
-      //   const pdfBuffer = Buffer.from(attachment.base64Content, 'base64');
+      if (bufferDataString.includes("Forwarded message")) {
+        
+      toAddress = extractForwardedEmail(bufferDataString);
+      
+      console.log('Forwarded to:', toAddress);
+      }
+      // console.log("attachments count", attachments.length);
 
-      //   // Generate a timestamp-based filename
-      //   const timestamp = new Date().getTime(); // Get current time in milliseconds
-      //   const filename = `output-${timestamp}.pdf`;
-
-      //   // Define the path to save the PDF
-      //   const uploadsDir = path.join(__dirname, 'uploads');
-      //   const pdfPath = path.join(uploadsDir, filename);
-
-      //   // Ensure the uploads directory exists
-      //   fs.mkdirSync(uploadsDir, { recursive: true });
-      //   // Write the binary data to a PDF file
-      //   fs.writeFileSync(pdfPath, pdfBuffer);
-      //   // Example: Print the extracted data
-      //   console.log("To:", toAddress);
-      //   console.log("From:", fromAddress);
-      //   console.log("Attachments:", attachments);
-      //   console.log("Date,", DateReceivedEmail)
-      //   console.log("path", pdfPath)
-      //   const AccessCheck = await users.findOne({ where: { user_email: toAddress } })
-      //   console.log("Access", AccessCheck)
-      //   if (AccessCheck.dataValues.access === 'Resume') {
-
-      //     const apiUrl = 'https://gpdataservices.com/process-pdf/'; // API Endpoint for Google document AI for processing the PDF's
-      //     const logoUrl = 'https://gpdataservices.com/ext-logo/' // API Endpoint for extracting Logo from the pdf's
-      //     const { logo } = await logoExtraction(pdfPath, logoUrl)
-      //     const { data } = await pdfProcessor(pdfPath, apiUrl)
-
-      //     // Extract and map data from the parsed JSON response
-      //     const extractData = (data) => {
-      //       if (!Array.isArray(data)) {
-      //         console.error('Invalid input: data is not an array');
-      //         return;  // or throw an error, or handle this case as needed
-      //       }
-
-      //       const tests = data.filter(item => item.type === "Tests").map(test => {
-
-      //         // Assuming that the properties are nested arrays, flatten them first
-      //         const properties = test.properties.flat(); // Flatten the nested arrays
-
-      //         const labTest = properties.find(prop => prop.type === "Test");
-      //         const result = properties.find(prop => prop.type === "Result");
-
-      //         // Find the first refRange with a length less than or equal to 30 characters
-      //         const refRange = properties.filter(prop => prop.type === "Ref_Range")
-      //           .find(prop => prop.mentionText.length <= 30);
-
-      //         return {
-      //           lab_provider: logo.lab_name || "Medpace",
-      //           lab_name: labTest ? labTest.mentionText : 'Unknown',
-      //           value: result ? result.mentionText : 'Pending',
-      //           refValue: refRange ? refRange.mentionText : 'N/A' // Handle missing reference range gracefully
-      //         };
-      //       });
-
-      //       return {
-      //         protocolId: data.find(item => item.type === "protocolId")?.mentionText || 'Unknown',
-      //         investigator: data.find(item => item.type === "investigator")?.mentionText || 'Unknown',
-      //         subjectId: data.find(item => item.type === "subjectId")?.mentionText || 'Unknown',
-      //         dateOfCollection: data.find(item => item.type === "dateOfCollection")?.mentionText || 'Unknown',
-      //         timePoint: data.find(item => item.type === "timePoint")?.mentionText || 'Unknown',
-      //         timeOfCollection: data.find(item => item.type === "Time_of_Collecton")?.mentionText || 'Unknown',
-      //         tests: tests
-      //       };
-      //     };
-
-      //     let extractedData = extractData(data);
-
-      //     function cleanTestData(data) {
-
-      //       // Iterate through tests and clean values and refValues
-      //       data.tests.forEach(test => {
-      //         // Remove alphabetic characters from value if not "Pending"
-      //         if (test.value !== "Pending") {
-      //           test.value = test.value.replace(/[a-zA-Z]/g, '').trim();
-      //         }
-
-      //         // Check refValue length and remove if too long
-      //         if (test.refValue && test.refValue.length > 30) {
-      //           console.log(`Removing long refValue: ${test.refValue}`);
-      //           delete test.refValue; // This will remove the refValue field from the test
-      //         }
-      //       });
-
-      //       return data;
-      //     }
-      //     extractedData = cleanTestData(extractedData);
-      //     // console.log("cleandddd",cleand)
-      //     // return
-
-      //     // Call function to upload file and get necessary data
-      //     const { pdfname, destination } = await UplaodFile(pdfPath, extractedData);
-      //     const pdfURL = `${process.env.STORAGE_URL}${destination}`;
-      //     console.log("URL: ", pdfURL);
-
-      //     //Calling function to dump the data in pdf_email table 
-      //     const { pdfEmailId } = await PdfEmail(DateReceivedEmail, pdfname, destination, toAddress);
-
-      //     //Checking if data is repeating
-      //     await findAllLabData(extractedData, toAddress,destination)
-
-      //     //Updating the data if already exist
-      //     const { message, datamade } = await insertOrUpdateLabReport(extractedData, toAddress)
-      //     console.log("message", datamade)
-      //     if (message === 'Add') {
-      //       const test = await findAllLabData(datamade, toAddress,destination)
-      //       const { message } = await insertOrUpdateLabReport(datamade, toAddress)
-      //       console.log("hereeee", message)
-      //       if (message === 'Add') {
-      //         console.log("after update Add")
-
-      //         //Dumping data into lab_Report table in db
-      //         const { labReportId } = await labReport(datamade, pdfEmailId, toAddress);
-      //         // Use extracted test data for lab report entries
-      //         const labdata = datamade.tests;
-      //         console.log("data", labdata)
-
-      //         //Dumping data into DB againt labreportdatta table
-      //         const labreportEntry = await labReoprtData(labdata, labReportId);
-      //         const status = "sent";
-
-      //         //Making csv saving into GDS and adding into DB
-      //         const csv = await MakeCsv(labReportId, datamade);
-      //         console.log("CSV: ", csv);
-      //         console.log("Process completed")
-      //       } else {
-      //         console.log("Data after update already exist")
-      //       }
-      //     } else {
-      //       console.log("Data already exists")
-      //     }
-      //   } else if (AccessCheck.dataValues.access === 'Paused') {
-      //     console.log("User access is paused")
-      //   } else {
-      //     console.log("not found")
-      //   }
-      // })
-      console.log("pdfs are processed")
-      // return res.status(200).send("PDF's are processed")
+      for (const attachment of attachments) {
+        // Define the uploads directory using the specified path
+        const uploadsDir = path.join(__dirname, 'uploads');
+    
+        // Base64 decoding and file writing process
+        const pdfBuffer = Buffer.from(attachment.base64Content, 'base64');
+        const timestamp = new Date().getTime();
+        const filename = `output-${timestamp}.pdf`;
+        const pdfPath = path.join(uploadsDir, filename);
+      // Define the path to save the PDF
+      
+        try {
+            // Ensure the directory exists
+            fs.mkdirSync(uploadsDir, { recursive: true });
+            console.log('Directory created:', uploadsDir);
+    
+            // Write the PDF file
+            fs.writeFileSync(pdfPath, pdfBuffer);
+            console.log('File written:', pdfPath);
+            const { pdfname,destination } = await UplaodFileTemp(pdfPath);
+            const path = `https://storage.googleapis.com/gpdata01/${destination}` 
+            // Prepare job data
+            const jobData = {
+                pdfPath: path,
+                toAddress: toAddress,
+                fromAddress: fromAddress,
+                DateReceivedEmail: DateReceivedEmail
+            };
+    
+            // Add job to Redis queue
+            await addJobToRedis(jobData);
+            console.log(`Added job for PDF: ${pdfPath}`);
+    
+        } catch (err) {
+            console.error('Error handling file:', err);
+            continue; // Skip to the next iteration if an error occurs
+        }
+    }
+    
+      console.log("PDFs are queued for processing");
     } catch (error) {
       console.error("Error processing request:", error);
-      return res.status(200).send("Error processing request.");
+      if (!responseSent) {
+        responseSent = true; // Ensure we send a response
+        return res.status(500).send("Error processing request.");
+      }
     }
-  })
+  });
 });
 
 // This function sets up an HTTP endpoint to trigger database migrations using Sequelize CLI.
@@ -2172,6 +1932,11 @@ exports.onlyLabNameSearch = onRequest({
         } else if (search.maxValue !== undefined) {
           valueCondition.value = { [Sequelize.Op.lte]: search.maxValue };
         }
+              // Exclude non-numerical statuses
+        valueCondition.value = { 
+          ...valueCondition.value,
+          [Sequelize.Op.not]: ['pending', 'positive', 'negative']  // Add other non-numerical statuses as needed
+        };
         const result = await lab_report.findAll({
           where: { email_to: { [Sequelize.Op.in]: nonArchivedEmails } },
           include: [{
@@ -2341,7 +2106,13 @@ exports.getLabReportNamesByEmailForSearch = onRequest(async (req, res) => {
 
       // Fetch unique lab names from labreport_data using the extracted IDs
       const labReportData = await labreport_data.findAll({
-        where: { labReoprtFk: labReportIds },
+        where: {
+          labReoprtFk: labReportIds,
+          // Assuming 'value' is the attribute that holds the lab result value
+          value: {
+            [Sequelize.Op.not]: ['pending', 'positive', 'negative'] // Exclude non-numerical statuses
+          }
+        },
         attributes: ['lab_name'],
         group: ['lab_name'] // Group by 'lab_name' to ensure uniqueness
       });
@@ -2358,6 +2129,7 @@ exports.getLabReportNamesByEmailForSearch = onRequest(async (req, res) => {
     }
   });
 });
+
 
 exports.signPdf = onRequest({
   timeoutSeconds: 3600, // Set the function timeout to 1 hour

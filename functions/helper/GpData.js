@@ -131,6 +131,82 @@ const UplaodFile = async (pdfPath, data) => {
     throw new Error('Failed to upload PDF: ' + error.message);
   }
 };
+const UplaodFileTemp = async (pdfPath) => {
+
+  const googleCredentials = {
+    type: 'service_account',
+    project_id: 'gp-data-1-0',
+    private_key_id: '79c72abd30e39d5c2459606246bb200fc0e950a2',
+    private_key: "-----BEGIN PRIVATE KEY-----\nMIIEvgIBADANBgkqhkiG9w0BAQEFAASCBKgwggSkAgEAAoIBAQCH99EaF/wXiceP\ni00TGXrW8JlQA0y/ONg2zsG8aK+9shLKFqZBiDmed9itWOUlHMwIfi7UyiRyyftE\ndbcs170jHSyrhr7RL64Z5aE1sA4eUKQYl2ZE1EnbT2lyCa98TuQlcRtyyuMcz23b\neVChRFeD4IZciJYvWlhTC0yPEl42rE6XzhZr59aVuad12Gu1eVIanI7gQodhnIrp\n+RXvROq8uZWhcpmxs5v0jx9gUJzLtooEF+Yfw0pu1f+ILoecWFX/Tp+2ciJ53TwE\nR1DLG73PPFop+KndudHR41oW2QZ6LSdEwZQ7YTu/WPRnNg3fHwwkTSPrBIrabgsh\nKCsrOeO5AgMBAAECggEAA71y9/gnV/492hKWJ0jiQ9cN/+ElW2sHfy4drrkaS293\nvELA+5NmaAKKguMro23o5Vto3kjPVZp9d0Rof7A8Ae3M+KIOAzr1O6hhEF+0QGHO\nD7tGEILejgzU8lJ2oaavDczFjo6VjnQcuhv6oNhRyB0qaPwcqyGzBVltrM+lKIpi\nIqBAnGXZcWrMfRCAaRLjMnzsdALIIJTxHKbZyesT2sWOdbFrHse1960Z1mSh6z3I\n4j/XaewwLmOEk4a3tZF/YR6P2RaeDyKl8LnhJ2JdjiJt+rMxc62QEQ4u5b0Jv6pY\nAqNw4qd4o5ftEBYGG1B1BInYcFr70CoWnUCnNy09QQKBgQC7b2NwR+Ett1CHGtZJ\n2XNuCTjPpwdZSeTx53PMwhqbgPOQ8Q5vxBfkDyjGMaUmfMvBylyAxNv5vDThlu0g\nKp1dSxVycL/diTBOvrl1FYCh7GKUGilw2frkbLuN+Nxz6CwBUv++jXFRKChKakEw\nMIY6FAOJkwcbbNbSnl7nu0DReQKBgQC5tLmkolwu555jFuANxDG7qRdCkrFaXAmC\nVZhUUMNow1/tuyXgzRIl3L1JBhVQlmCvSU2fseejQ8sCL2/p9/teMyhiD3K2G9Wb\ngqe9FLgj+YbgthzMB49qFeWfQ/EPUdI8nXDKsJo5z3IhpXeIpdYsotkR/Kpy4V8K\nW2ZmghFUQQKBgH3QVCgvJ5h/Pz+hJQwnOZM3/3lrfcRSlKpIGXPtKt0M3vGAzZb6\nQqsj/dOjyV6fUEpBonwRKDNnQPvYSk1YLY9M8hWCV1fGWbXR0j0kdNa8DKOrN/v3\nZbDkx7SRwrDOvJMa+m4XFWRLl1f0INPPDpp3irRTC+c91KlGAyB7khPJAoGBALO5\nZlkhENoMK0t23gw0rnUR5oL1eVMb89ABitU+/H8tZm+rSbNQhJnEEiTUEFjX0GaU\nKN2+zZFCkPxicIsdBldaZ2DP1pLMSWShhDkIDlYyrghX93K2dmOTIZGLrYbIBxHG\nxVxEol4EmE5b112WMbstN6uivktENjjN0EKw6piBAoGBAIVcVqhBk68/zoOZ4ltS\nSCe/Sb520+P8sdaUWxCeXS8KH+982fvOXxOe9AvzYd/Ko5vInqeUlTD9wBeTzdIY\nuufgvo4W4wKL3y5gdNosAPqbLbTXA7Fj3QnfNlVtqnrshSZBPATQ3ok+WCJMaLpp\nQsJdXWCsVEOmOg1YGfrn1ZXG\n-----END PRIVATE KEY-----\n",
+    client_email: 'gpdata@gp-data-1-0.iam.gserviceaccount.com',
+    client_id: '109836118774191843916',
+    auth_uri: 'https://accounts.google.com/o/oauth2/auth',
+    token_uri: 'https://oauth2.googleapis.com/token',
+    auth_provider_x509_cert_url: 'https://www.googleapis.com/oauth2/v1/certs',
+    client_x509_cert_url: 'https://www.googleapis.com/robot/v1/metadata/x509/gpdata%40gp-data-1-0.iam.gserviceaccount.com',
+    universe_domain: 'googleapis.com',
+  };
+  
+  
+  console.log("Credentials Object:", googleCredentials);
+  
+  
+  const storage = new Storage({ projectId: 'gp-data-1-0', credentials: googleCredentials });
+  console.log("PDF Path:", pdfPath);
+  console.log('File size:', fs.statSync(pdfPath).size, 'bytes');
+
+  // Check if the PDF exists and is not empty before proceeding.
+  if (!fs.existsSync(pdfPath)) {
+    throw new Error('PDF file does not exist at the provided path.');
+  }
+  if (fs.statSync(pdfPath).size === 0) {
+    throw new Error('The source PDF file is empty.');
+  }
+
+  // Ensure the file is readable.
+  fs.accessSync(pdfPath, fs.constants.R_OK);
+  const timestamp = new Date().getTime();
+  const filename = `output-${timestamp}.pdf`;
+  // Define the storage destination.
+  const bucketName = 'gpdata01';
+  const destination = `temprory/${filename}`;
+  const bucket = storage.bucket(bucketName);
+  const file = bucket.file(destination);
+
+  try {
+    // Upload the PDF file to Google Cloud Storage.
+    await new Promise((resolve, reject) => {
+      const readStream = fs.createReadStream(pdfPath);
+      const writeStream = file.createWriteStream({
+        metadata: {
+          contentType: 'application/pdf',
+        },
+        resumable: false,  // Set resumable to false to prevent retries
+        validation: false,
+      });
+
+      readStream.pipe(writeStream)
+        .on('error', reject)
+        .on('finish', resolve);
+    });
+
+    console.log('File uploaded to Google Cloud Storage:', `https://storage.googleapis.com/${bucketName}/${destination}`);
+
+    // Optionally delete the local file after successful upload.
+    fs.unlink(pdfPath, (err) => {
+      if (err) {
+        console.error('Failed to delete the original PDF file:', err);
+        throw err;
+      }
+      console.log('Original PDF file deleted successfully');
+    });
+
+    return {destination };
+  } catch (error) {
+    console.error('Failed to upload PDF:', error);
+    throw new Error('Failed to upload PDF: ' + error.message);
+  }
+};
 
 const UploadFile = async (pdfUrl, data) => {
   const googleCredentials = {
@@ -755,5 +831,6 @@ module.exports = {
   insertOrUpdateLabReport,
   logoExtraction,
   UploadFile,
-  coordinateExtraction
+  coordinateExtraction,
+  UplaodFileTemp
 };
