@@ -2152,7 +2152,7 @@ exports.signPdf = onRequest({
           }
         });
       });
-      
+      console.log("user",userDecode)
       const { pdfUrl } = req.body; // Use a URL in the request body
       // // Determine the appropriate email to filter lab reports based on user role
       // let email_to = userDecode.user.isEmployee ? userDecode.user.invitedBy : userDecode.user.user_email;
@@ -2234,7 +2234,7 @@ exports.signPdf = onRequest({
         ]
       })
       console.log("signed pdf", signUrl.data.id)
-      const signedPdf = await signedPdfs.create({ pdf_id: signUrl.data.id, pdfEmailIdfk: req.body.pdfId })
+      const signedPdf = await signedPdfs.create({ pdf_id: signUrl.data.id, pdfEmailIdfk: req.body.pdfId, signedBy:userDecode.email })
       return res.status(200).send(`Document processed successfully ${JSON.stringify(signUrl)}`);
     } catch (err) {
       if (err === 'Forbidden') {

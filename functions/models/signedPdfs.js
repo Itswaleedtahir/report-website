@@ -33,7 +33,11 @@ module.exports = (sequelize, DataTypes) => {
           email_to:{
             type: DataTypes.STRING,
       allowNull: true,
-          }
+          },
+          signedBy: {
+      type: DataTypes.STRING,
+      allowNull: true,
+    }
     },
     {
       tableName: "signedPdfs",
