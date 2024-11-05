@@ -44,6 +44,10 @@ module.exports = (sequelize, DataTypes) => {
     PdfEmails.belongsTo(models.pdf_email,  { 
       foreignKey: { name: 'userEmailFk' },
       as: 'userEmailId',})
+      PdfEmails.hasMany(models.lab_report, {
+    foreignKey: 'pdfEmailIdfk',
+    as: 'labReports'
+  });
   };
 
   return PdfEmails;

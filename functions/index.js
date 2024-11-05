@@ -1875,30 +1875,41 @@ exports.forgotPassword = onRequest(async (req, res) => {
 });
 
 exports.onlyLabNameSearch = onRequest({
-  timeoutSeconds: 3600, // Set the function timeout to 1 hour
-  memory: "1GiB", // Allocate 1 GiB of memory to the function
+  timeoutSeconds: 3600,
+  memory: "1GiB",
 }, async (req, res) => {
   cors(req, res, async () => {
-    // Retrieve the authorization header from the request
     const authHeader = req.headers['authorization'];
-    console.log("header", authHeader); // Log the authorization header for debugging
-
-    // If no authorization header is found, send a 401 Unauthorized response
     if (!authHeader) {
-      return res.sendStatus(401);
+      return res.sendStatus(401); // Unauthorized if no authorization token is present
     }
 
     try {
-      // Verify the JWT from the authorization header
       const userDecode = await new Promise((resolve, reject) => {
         jwt.verify(authHeader, 'your_secret_key', (err, user) => {
           if (err) {
-            reject(new Error('Forbidden')); // Reject the promise if JWT is invalid
+            reject(new Error('Forbidden'));
           } else {
-            resolve(user); // Resolve the promise with the decoded user if JWT is valid
+            resolve(user);
           }
         });
       });
+
+      // Load the JSON mapping to get all variants for each master name
+      const labToMasterMapping = JSON.parse(
+        fs.readFileSync(path.join(__dirname, 'labNameMappings.json'), 'utf8')
+      );
+
+      // Function to retrieve all original names for selected master names
+      function getOriginalNamesForMasterNames(selectedMasters) {
+        const originalNames = [];
+        for (const [original, master] of Object.entries(labToMasterMapping)) {
+          if (selectedMasters.includes(master)) {
+            originalNames.push(original);
+          }
+        }
+        return originalNames;
+      }
 
       // Get email_to from the request body
       let email_to = req.body.email_to;
@@ -1924,7 +1935,12 @@ exports.onlyLabNameSearch = onRequest({
 
       await Promise.all(req.body.search.map(async (search) => {
         const valueCondition = {};
-        let lab_names = JSON.parse(search.lab_name_json);
+        
+        // Get all original names based on selected master names
+        let masterLabNames = JSON.parse(search.lab_name_json);
+        let originalLabNames = getOriginalNamesForMasterNames(masterLabNames);
+
+        // Apply minValue and maxValue conditions
         if (search.minValue !== undefined && search.maxValue !== undefined) {
           valueCondition.value = { [Sequelize.Op.between]: [search.minValue, search.maxValue] };
         } else if (search.minValue !== undefined) {
@@ -1932,17 +1948,19 @@ exports.onlyLabNameSearch = onRequest({
         } else if (search.maxValue !== undefined) {
           valueCondition.value = { [Sequelize.Op.lte]: search.maxValue };
         }
-              // Exclude non-numerical statuses
+        
+        // Exclude non-numerical statuses
         valueCondition.value = { 
           ...valueCondition.value,
-          [Sequelize.Op.not]: ['pending', 'positive', 'negative']  // Add other non-numerical statuses as needed
+          [Sequelize.Op.not]: ['pending', 'positive', 'negative']
         };
+
         const result = await lab_report.findAll({
           where: { email_to: { [Sequelize.Op.in]: nonArchivedEmails } },
           include: [{
             model: labreport_data,
             as: 'labreport_data',
-            where: { lab_name: lab_names, ...valueCondition },
+            where: { lab_name: originalLabNames, ...valueCondition },
             required: true,
             include: [{
               model: ref_range_data,
@@ -1952,9 +1970,9 @@ exports.onlyLabNameSearch = onRequest({
             }]
           }]
         });
+        
         labReports = labReports.concat(result.flat());
       }));
-
       const pdfPaths = await Promise.all(labReports.map(async (report) => {
         return pdf_email.findAll({
           where: { id: report.pdfEmailIdfk }
@@ -1996,7 +2014,6 @@ exports.onlyLabNameSearch = onRequest({
       // Check if there's only one record
       if (labReports.length === 1) {
         const transformedReports = transformData(labReports, pdfPathMap);
-        // If only one record, send it directly
         return res.json({
           data: transformedReports,
           pagination: {
@@ -2007,19 +2024,15 @@ exports.onlyLabNameSearch = onRequest({
           }
         });
       }
-      // If multiple records, check if all have the same protocolId and subjectId
-      if (labReports.length > 0) {
-        const { protocolId, subjectId } = labReports[0]; // Get the first record's protocolId and subjectId
 
+      if (labReports.length > 0) {
+        const { protocolId, subjectId } = labReports[0];
         const allSame = labReports.every(report => 
           report.protocolId === protocolId && report.subjectId === subjectId
         );
 
-        // If all records have the same protocolId and subjectId, process further
         if (allSame) {
           const transformedReports = transformData(labReports, pdfPathMap);
-          console.log("report",transformedReports)
-          // Apply pagination
           const page = parseInt(req.query.page) || 1;
           const pageSize = parseInt(req.query.pageSize) || 10;
           const startIndex = (page - 1) * pageSize;
@@ -2035,11 +2048,9 @@ exports.onlyLabNameSearch = onRequest({
             }
           });
         } else {
-          // If not all records have the same protocolId and subjectId, return empty result
           return res.status(400).send({ message: 'Records have different protocolId or subjectId' });
         }
       } else {
-        // If no lab reports, return an appropriate response
         return res.status(400).send({ message: 'No lab reports found' });
       }
     } catch (error) {
@@ -2056,7 +2067,7 @@ exports.onlyLabNameSearch = onRequest({
 exports.getLabReportNamesByEmailForSearch = onRequest(async (req, res) => {
   cors(req, res, async () => {
     const authHeader = req.headers['authorization'];
-    console.log("header", authHeader);  // Log the received authorization header for debugging
+    console.log("header", authHeader); // Log the received authorization header for debugging
     if (!authHeader) {
       return res.sendStatus(401); // Return Unauthorized if no authorization token is present
     }
@@ -2071,6 +2082,11 @@ exports.getLabReportNamesByEmailForSearch = onRequest(async (req, res) => {
           }
         });
       });
+
+      // Load the lab name mappings from JSON file
+      const labToMasterMapping = JSON.parse(
+        fs.readFileSync(path.join(__dirname, 'labNameMappings.json'), 'utf8')
+      );
 
       // Get email_to from the request body
       let email_to = req.body.email_to;
@@ -2108,7 +2124,6 @@ exports.getLabReportNamesByEmailForSearch = onRequest(async (req, res) => {
       const labReportData = await labreport_data.findAll({
         where: {
           labReoprtFk: labReportIds,
-          // Assuming 'value' is the attribute that holds the lab result value
           value: {
             [Sequelize.Op.not]: ['pending', 'positive', 'negative'] // Exclude non-numerical statuses
           }
@@ -2117,11 +2132,19 @@ exports.getLabReportNamesByEmailForSearch = onRequest(async (req, res) => {
         group: ['lab_name'] // Group by 'lab_name' to ensure uniqueness
       });
 
-      // Extract lab names from the results and prepare the response
-      const labNames = labReportData.map(data => data.lab_name);
-      return res.json({ labNames }); // Send the list of unique lab names as a response
+     // Array of objects with original and master name pairs
+     const labNamesWithMaster = labReportData.map(data => {
+      const originalName = data.lab_name;
+      const masterName = labToMasterMapping[originalName] || originalName;
+      return masterName;
+    });
+// Use Set to ensure uniqueness
+const uniqueLabNames = Array.from(new Set(labNamesWithMaster));
+
+// Return the array of unique values
+return res.json({ labNames: uniqueLabNames });
     } catch (error) {
-      if (error === 'Forbidden') {
+      if (error.message === 'Forbidden') {
         return res.sendStatus(403); // Forbidden status if JWT verification fails
       }
       console.error('Error:', error); // Log any errors for debugging
@@ -2234,7 +2257,7 @@ exports.signPdf = onRequest({
         ]
       })
       console.log("signed pdf", signUrl.data.id)
-      const signedPdf = await signedPdfs.create({ pdf_id: signUrl.data.id, pdfEmailIdfk: req.body.pdfId, signedBy:userDecode.email })
+      const signedPdf = await signedPdfs.create({ pdf_id: signUrl.data.id, pdfEmailIdfk: req.body.pdfId, signedBy:userDecode.email,protocolId:req.body.protocolId,subjectId:req.body.subjectId,dateOfCollection:req.body.dateOfCollection,timePoint:req.body.timePoint })
       return res.status(200).send(`Document processed successfully ${JSON.stringify(signUrl)}`);
     } catch (err) {
       if (err === 'Forbidden') {
@@ -2421,15 +2444,44 @@ exports.getPdfsForEmail = onRequest(async (req, res) => {
         return res.status(400).send({ message: 'All provided users are archived' });
       }
 
-      // Perform a database query to fetch lab reports matching the specified criteria
-      const labReports = await pdf_email.findAll({
+      const results = await pdf_email.findAll({
         where: {
           email_to: { [Sequelize.Op.in]: nonArchivedEmails },
           isSigned: false
-        }
+        },
+        include: [
+          {
+            model: lab_report,
+            as: 'labReports',
+            attributes: ['protocolId', 'subjectId', 'dateOfCollection','timePoint']
+          }
+        ]
       });
+      
+      // Flatten the results
+      const formattedResults = results.map(email => {
+        const firstReport = email.labReports[0] || {}; // Take the first lab report, if it exists
+        return {
+          id: email.id,
+          userEmailFk: email.userEmailFk,
+          email_to: email.email_to,
+          receivedAt: email.receivedAt,
+          pdfName: email.pdfName,
+          pdfPath: email.pdfPath,
+          isSigned: email.isSigned,
+          createdAt: email.createdAt,
+          updatedAt: email.updatedAt,
+          protocolId: firstReport.protocolId || null,
+          subjectId: firstReport.subjectId || null,
+          dateOfCollection: firstReport.dateOfCollection || null,
+          timePoint:firstReport.timePoint || null
+        };
+      });
+      
+      console.log(formattedResults);
+      
 
-      return res.status(201).send(labReports); // Send the fetched lab reports as a response
+      return res.status(201).send(formattedResults); // Send the fetched lab reports as a response
     } catch (error) {
       if (error === 'Forbidden') {
         return res.sendStatus(403); // Forbidden status if JWT verification fails

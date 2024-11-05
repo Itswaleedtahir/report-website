@@ -37,6 +37,22 @@ module.exports = (sequelize, DataTypes) => {
           signedBy: {
       type: DataTypes.STRING,
       allowNull: true,
+    },
+    protocolId: {
+      type: DataTypes.STRING,
+      allowNull: true,
+    },
+    subjectId: {
+      type: DataTypes.STRING,
+      allowNull: true,
+    },
+    dateOfCollection: {
+      type: DataTypes.STRING,
+      allowNull: true,
+    },
+    timePoint:{
+      type:DataTypes.STRING,
+      allowNull:true
     }
     },
     {
