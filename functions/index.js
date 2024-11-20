@@ -8,7 +8,7 @@ const cors = require("cors")({ origin: true });
 const sgMail = require('@sendgrid/mail');
 const { Op, Sequelize } = require("sequelize");
 const { UplaodFileTemp, PdfEmail, labReport, labReoprtData, MakeCsv, pdfProcessor, findAllLabData, insertOrUpdateLabReport, logoExtraction, UploadFile,coordinateExtraction } = require("./helper/GpData");
-const { users, admin, pdf_email, labreport_data, lab_report, labreport_csv, ref_range_data, signedPdfs } = require("./models/index");
+const { users, admin, pdf_email, labreport_data, lab_report, labreport_csv, ref_range_data, signedPdfs,printedPdfs } = require("./models/index");
 const fs = require('fs');
 const sequelize = require('./config/db'); // Import the configured instance
 const { PDFDocument } = require('pdf-lib');
@@ -1801,6 +1801,7 @@ exports.deleteEmployee = onRequest(async (req, res) => {
       // Attempt to delete the user from the database who matches the email and is an employee.
       const deleteUserEmail = await users.destroy({
         where: {
+          user_email:email,
           isEmployee: true,
           invitedBy:invitedBy
         }
@@ -1903,13 +1904,28 @@ exports.onlyLabNameSearch = onRequest({
       // Function to retrieve all original names for selected master names
       function getOriginalNamesForMasterNames(selectedMasters) {
         const originalNames = [];
-        for (const [original, master] of Object.entries(labToMasterMapping)) {
-          if (selectedMasters.includes(master)) {
-            originalNames.push(original);
+      
+        // Process all selectedMasters
+        for (const master of selectedMasters) {
+          let found = false;
+      
+          // Check against all mappings
+          for (const [original, mappedMaster] of Object.entries(labToMasterMapping)) {
+            if (master === mappedMaster) {
+              originalNames.push(original);
+              found = true; // Mark as found
+            }
+          }
+      
+          // If no match was found, push the master directly
+          if (!found) {
+            originalNames.push(master);
           }
         }
+      
         return originalNames;
       }
+      
 
       // Get email_to from the request body
       let email_to = req.body.email_to;
@@ -1939,7 +1955,7 @@ exports.onlyLabNameSearch = onRequest({
         // Get all original names based on selected master names
         let masterLabNames = JSON.parse(search.lab_name_json);
         let originalLabNames = getOriginalNamesForMasterNames(masterLabNames);
-
+        console.log("names",originalLabNames)
         // Apply minValue and maxValue conditions
         if (search.minValue !== undefined && search.maxValue !== undefined) {
           valueCondition.value = { [Sequelize.Op.between]: [search.minValue, search.maxValue] };
@@ -2012,26 +2028,26 @@ exports.onlyLabNameSearch = onRequest({
       }
 
       // Check if there's only one record
-      if (labReports.length === 1) {
-        const transformedReports = transformData(labReports, pdfPathMap);
-        return res.json({
-          data: transformedReports,
-          pagination: {
-            totalItems: 1,
-            totalPages: 1,
-            currentPage: 1,
-            pageSize: 1
-          }
-        });
-      }
+      // if (labReports.length === 1) {
+      //   const transformedReports = transformData(labReports, pdfPathMap);
+      //   return res.json({
+      //     data: transformedReports,
+      //     pagination: {
+      //       totalItems: 1,
+      //       totalPages: 1,
+      //       currentPage: 1,
+      //       pageSize: 1
+      //     }
+      //   });
+      // }
 
-      if (labReports.length > 0) {
-        const { protocolId, subjectId } = labReports[0];
-        const allSame = labReports.every(report => 
-          report.protocolId === protocolId && report.subjectId === subjectId
-        );
+      // if (labReports.length > 0) {
+      //   const { protocolId, subjectId } = labReports[0];
+      //   const allSame = labReports.every(report => 
+      //     report.protocolId === protocolId && report.subjectId === subjectId
+      //   );
 
-        if (allSame) {
+        // if (allSame) {
           const transformedReports = transformData(labReports, pdfPathMap);
           const page = parseInt(req.query.page) || 1;
           const pageSize = parseInt(req.query.pageSize) || 10;
@@ -2047,12 +2063,12 @@ exports.onlyLabNameSearch = onRequest({
               pageSize
             }
           });
-        } else {
-          return res.status(400).send({ message: 'Records have different protocolId or subjectId' });
-        }
-      } else {
-        return res.status(400).send({ message: 'No lab reports found' });
-      }
+        // } else {
+        //   return res.status(400).send({ message: 'Records have different protocolId or subjectId' });
+        // }
+      // } else {
+      //   return res.status(400).send({ message: 'No lab reports found' });
+      // }
     } catch (error) {
       console.error('Error in processing:', error);
       if (error.message === 'Forbidden') {
@@ -2156,10 +2172,10 @@ return res.json({ labNames: uniqueLabNames });
 
 exports.signPdf = onRequest({
   timeoutSeconds: 3600, // Set the function timeout to 1 hour
-},async (req, res) => {
+}, async (req, res) => {
   cors(req, res, async () => {
     const authHeader = req.headers['authorization'];
-    console.log("header", authHeader);  // Log the received authorization header for debugging
+    console.log("header", authHeader); // Log the received authorization header for debugging
     if (!authHeader) {
       return res.sendStatus(401); // Return Unauthorized if no authorization header is present
     }
@@ -2175,57 +2191,100 @@ exports.signPdf = onRequest({
           }
         });
       });
-      console.log("user",userDecode)
+      console.log("user", userDecode);
+
       const { pdfUrl } = req.body; // Use a URL in the request body
-      // // Determine the appropriate email to filter lab reports based on user role
-      // let email_to = userDecode.user.isEmployee ? userDecode.user.invitedBy : userDecode.user.user_email;
-      // if (!email_to) {
-      //   return res.status(400).send("Email parameter is required."); // Check if email is parsed correctly
-      // }
-      // const user = await users.findOne({ where: { user_email: email_to } });
-      const apiUrl = "https://gpdataservices.com/fetch-co-ordinates"
-      const {coordinates} = await coordinateExtraction(pdfUrl ,apiUrl )
-      console.log("coordinates",coordinates)
-    // Extract coordinates from the object
+      const apiUrl = "https://gpdataservices.com/fetch-co-ordinates";
+      const { coordinates } = await coordinateExtraction(pdfUrl, apiUrl);
+//       const coordinates = {
+//   "page_1": [
+//     [
+//       682, 365.021
+      
+//     ],
+//     [
+//       682, 380.771
+      
+//     ]
+//   ],
+//   "signature_coordinates": [
+//     199.13104248046875,
+//     840
+//   ],
+//   "date_coordinates": [
+//     563.7082214355469,
+//     850
+//   ]
+// }
+    
+      console.log("coordinates", coordinates);
+
       const dateCoords = coordinates.date_coordinates;
       const signCoords = coordinates.signature_coordinates;
-      
+
       const parts = pdfUrl.split('/');
-      // The PDF name is expected to be the last segment after the last '/'
       const pdfName = parts[parts.length - 1];
 
       const response = await axios.get(pdfUrl, { responseType: 'arraybuffer' });
       const pdfBuffer = response.data;
       const pdfDoc = await PDFDocument.load(pdfBuffer);
       const pageCount = pdfDoc.getPageCount();
+
       const fields = [];
+
+      // Add the original signature and date fields for each page
       for (let i = 1; i <= pageCount; i++) {
         fields.push(
           {
             type: 'signature',
             required: true,
             fixed_width: false,
-            lock_sign_date: false,
             x: signCoords[0], // X coordinate for signature from coordinates object
             y: signCoords[1], // Y coordinate for signature from coordinates object
             page: i,
             recipient_id: userDecode.user_id
-        },
-        {
+          },
+          {
             type: 'date',
             required: true,
             fixed_width: false,
-            lock_sign_date: false, // Set true if you want the date to auto-populate and lock
+            lock_sign_date: true, // Set true if you want the date to auto-populate and lock
             x: dateCoords[0], // X coordinate for date from coordinates object
             y: dateCoords[1], // Y coordinate for date from coordinates object
             page: i,
             recipient_id: userDecode.user_id,
             date_format: 'MM/DD/YYYY' // Specify the format for the date
-        }
+          }
         );
       }
+
+      // Add additional fields based on specific coordinates for each page
+      Object.keys(coordinates).forEach((pageKey) => {
+        if (pageKey.startsWith('page')) {
+          console.log("pagw",pageKey)
+          const pageNumber = parseInt(pageKey.split('_')[1]); // Extract page number from key
+          console.log("no",pageNumber)
+          const pageCoordinates = coordinates[pageKey];
+
+          // Loop through each coordinate on the current page to create custom fields
+          pageCoordinates.forEach(coord => {
+            fields.push({
+              type: 'text',
+              required: true,
+              fixed_width: false,
+              x: coord[0], // X coordinate from array
+              y: coord[1], // Y coordinate from array
+              page: pageNumber,
+              recipient_id: userDecode.user_id
+            });
+          });
+        }
+      });
+      
+
       console.log(`The PDF has ${pageCount} pages.`);
-      console.log("pagessss", fields)
+      console.log("Fields for signing", fields);
+
       signwell.auth('YWNjZXNzOjFhMTFjMzhkY2RkNDZhMWZlNDZkNDIyNGM5ODM1NTBj');
       const signUrl = await signwell.postApiV1Documents({
         test_mode: true,
@@ -2252,27 +2311,33 @@ exports.signPdf = onRequest({
             email: userDecode.email
           }
         ],
-        fields: [
-          fields
-        ]
-      })
-      console.log("signed pdf", signUrl.data.id)
-      const signedPdf = await signedPdfs.create({ pdf_id: signUrl.data.id, pdfEmailIdfk: req.body.pdfId, signedBy:userDecode.email,protocolId:req.body.protocolId,subjectId:req.body.subjectId,dateOfCollection:req.body.dateOfCollection,timePoint:req.body.timePoint })
+        fields:[fields]
+      });
+
+      console.log("Signed PDF", signUrl.data.id);
+      const signedPdf = await signedPdfs.create({
+        pdf_id: signUrl.data.id,
+        pdfEmailIdfk: req.body.pdfId,
+        signedBy: userDecode.email,
+        protocolId: req.body.protocolId,
+        subjectId: req.body.subjectId,
+        dateOfCollection: req.body.dateOfCollection,
+        timePoint: req.body.timePoint
+      });
+
       return res.status(200).send(`Document processed successfully ${JSON.stringify(signUrl)}`);
     } catch (err) {
       if (err === 'Forbidden') {
         return res.sendStatus(403); // Forbidden status if JWT verification fails
       }
       if (err.response) {
-        // Log the invalid keys from the API error response
         console.error('Invalid keys:', err);
         console.error('Error message:', err);
         return res.status(400).send(err.response.data);
       } else {
-        // General error handling if the response is not available
         console.error('Error:', err);
         return res.status(500).send("Internal server error", err);
-      }// Return Internal Server Error for other cases
+      }
     }
   });
 });
@@ -2453,7 +2518,11 @@ exports.getPdfsForEmail = onRequest(async (req, res) => {
           {
             model: lab_report,
             as: 'labReports',
-            attributes: ['protocolId', 'subjectId', 'dateOfCollection','timePoint']
+            attributes: ['protocolId', 'subjectId', 'dateOfCollection','timePoint'],
+            where: {
+              protocolId: { [Sequelize.Op.ne]: null },
+              subjectId: { [Sequelize.Op.ne]: null }
+            }
           }
         ]
       });
@@ -2587,7 +2656,8 @@ exports.getSignedPdf = onRequest(async (req, res) => {
       const labReports = await signedPdfs.findAll({
         where: {
           email_to: { [Sequelize.Op.in]: nonArchivedEmails },
-          isSigned: true
+          isSigned: true,
+          isPrinted:false
         }
       });
 
@@ -2782,3 +2852,121 @@ exports.getEmployeeClients = onRequest(async (req, res) => {
     }
   })
 })
+
+exports.printedPdfs = onRequest(async (req,res) => {
+  cors(req,res,async()=>{
+    const authHeader = req.headers['authorization'];
+    console.log("header", authHeader);  // Log the received authorization header for debugging
+    if (!authHeader) {
+      return res.sendStatus(401); // Return Unauthorized if no authorization header is present
+    }
+    try {
+      // Decode and verify the JWT from the authorization header asynchronously
+      const userDecode = await new Promise((resolve, reject) => {
+        jwt.verify(authHeader, 'your_secret_key', (err, user) => {
+          if (err) {
+            reject('Forbidden'); // Reject the promise if the token is invalid
+          } else {
+            resolve(user); // Resolve with the decoded user information if the token is valid
+          }
+        });
+      });
+      const loggedInEmail = userDecode.email
+
+      // Find the user by email
+      const user = await users.findOne({
+        where: { user_email: loggedInEmail }
+      });
+
+      if (!user) {
+        return res.status(404).json({ message: 'User not found' });
+      }
+      const {printArray} = req.body
+      for(const print of printArray){
+        const { id, pdf_id, pdfEmailIdfk, pdfUrl, isSigned, email_to, signedBy, protocolId, subjectId, dateOfCollection, timePoint } = print
+        await signedPdfs.update(
+          { isPrinted: true },
+          { where: { id } }
+        );
+        await printedPdfs.create({
+          pdfEmailIdfk,
+          pdfUrl,
+          isSigned,
+          isPrinted:true,
+          email_to,
+          signedBy,
+          printedBy:loggedInEmail,
+          protocolId,
+          subjectId,
+          dateOfCollection,
+          timePoint,
+          createdAt: new Date(),
+        })
+      }
+
+      return res.status(200).json({ message: 'PDF records processed successfully' });
+    } catch (error) {
+      console.error('Error processing PDFs:', error);
+      return res.status(500).json({ message: 'Internal Server Error', error });
+    }
+  })
+})
+
+exports.getPrintedPdf = onRequest(async (req, res) => {
+  cors(req, res, async () => {
+    const authHeader = req.headers['authorization'];
+    console.log("header", authHeader);  // Log the received authorization header for debugging
+    if (!authHeader) {
+      return res.sendStatus(401); // Return Unauthorized if no authorization header is present
+    }
+
+    try {
+      // Decode and verify the JWT from the authorization header asynchronously
+      const userDecode = await new Promise((resolve, reject) => {
+        jwt.verify(authHeader, 'your_secret_key', (err, user) => {
+          if (err) {
+            reject(new Error('Forbidden')); // Reject the promise if the token is invalid
+          } else {
+            resolve(user); // Resolve with the decoded user information if the token is valid
+          }
+        });
+      });
+
+      // Get email_to from the request body
+      let email_to = req.body.email_to;
+
+      // Ensure email_to is an array and provided
+      if (!email_to || !Array.isArray(email_to) || email_to.length === 0) {
+        return res.status(400).send("Email_to array is required.");
+      }
+
+      // Find the users based on email_to and filter out archived users
+      const usersFound = await users.findAll({
+        where: { user_email: email_to }
+      });
+
+      const nonArchivedEmails = usersFound.filter(user => !user.isArchived).map(user => user.user_email);
+
+      if (nonArchivedEmails.length === 0) {
+        return res.status(400).send({ message: 'All provided users are archived' });
+      }
+
+      // Perform a database query to fetch signed PDFs matching the specified criteria
+      const labReports = await printedPdfs.findAll({
+        where: {
+          email_to: { [Sequelize.Op.in]: nonArchivedEmails },
+          isSigned: true,
+          isPrinted:true
+        }
+      });
+
+      return res.status(201).send(labReports); // Send the signed PDFs as a response
+    } catch (error) {
+      if (error === 'Forbidden') {
+        return res.sendStatus(403); // Forbidden status if JWT verification fails
+      }
+      console.error('Error:', error); // Log any errors for debugging
+      return res.status(500).send("Internal server error"); // Return Internal Server Error for other cases
+    }
+  });
+});

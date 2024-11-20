@@ -1,17 +1,13 @@
 "use strict";
 module.exports = (sequelize, DataTypes) => {
-  const signedPdf = sequelize.define(
-    "signedPdfs",
+  const printedPdf = sequelize.define(
+    "printedPdfs",
     {
       id: {
         allowNull: false,
         autoIncrement: true,
         primaryKey: true,
         type: DataTypes.INTEGER
-      },
-      pdf_id: {
-        allowNull: false,
-        type: DataTypes.STRING
       },
       pdfEmailIdfk: {
         type: DataTypes.INTEGER,
@@ -26,20 +22,22 @@ module.exports = (sequelize, DataTypes) => {
         allowNull: true
       },
       isSigned: {
-        type: DataTypes.BOOLEAN,
-        allowNull: false,
-        defaultValue: false
+        type: DataTypes.STRING,
+        allowNull: true,
       },
       isPrinted: {
-        type: DataTypes.BOOLEAN,
-        allowNull: false,
-        defaultValue: false
+        type: DataTypes.STRING,
+        allowNull: true,
       },
       email_to: {
         type: DataTypes.STRING,
         allowNull: true,
       },
       signedBy: {
+        type: DataTypes.STRING,
+        allowNull: true,
+      },
+      printedBy: {
         type: DataTypes.STRING,
         allowNull: true,
       },
@@ -58,13 +56,22 @@ module.exports = (sequelize, DataTypes) => {
       timePoint: {
         type: DataTypes.STRING,
         allowNull: true
+      },
+      createdAt:{
+        type: DataTypes.DATE,
+        allowNull: false,
+  
+      },
+      updatedAt:{
+        type: DataTypes.DATE,
+        allowNull: false,
       }
     },
     {
-      tableName: "signedPdfs",
-      timestamps: false,
+      tableName: "printedPdfs",
+      timestamps: true,
     }
   );
 
-  return signedPdf;
+  return printedPdf;
 };
