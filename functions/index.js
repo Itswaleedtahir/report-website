@@ -2055,7 +2055,7 @@ exports.onlyLabNameSearch = onRequest({
           const paginatedLabReports = transformedReports.slice(startIndex, startIndex + pageSize);
 
           return res.json({
-            data: paginatedLabReports,
+            data: transformedReports,
             pagination: {
               totalItems: transformedReports.length,
               totalPages: Math.ceil(transformedReports.length / pageSize),
@@ -2218,7 +2218,6 @@ exports.signPdf = onRequest({
 // }
     
       console.log("coordinates", coordinates);
-
       const dateCoords = coordinates.date_coordinates;
       const signCoords = coordinates.signature_coordinates;
 
@@ -2258,28 +2257,28 @@ exports.signPdf = onRequest({
         );
       }
 
-      // Add additional fields based on specific coordinates for each page
-      Object.keys(coordinates).forEach((pageKey) => {
-        if (pageKey.startsWith('page')) {
-          console.log("pagw",pageKey)
-          const pageNumber = parseInt(pageKey.split('_')[1]); // Extract page number from key
-          console.log("no",pageNumber)
-          const pageCoordinates = coordinates[pageKey];
+      // // Add additional fields based on specific coordinates for each page
+      // Object.keys(coordinates).forEach((pageKey) => {
+      //   if (pageKey.startsWith('page')) {
+      //     console.log("pagw",pageKey)
+      //     const pageNumber = parseInt(pageKey.split('_')[1]); // Extract page number from key
+      //     console.log("no",pageNumber)
+      //     const pageCoordinates = coordinates[pageKey];
 
-          // Loop through each coordinate on the current page to create custom fields
-          pageCoordinates.forEach(coord => {
-            fields.push({
-              type: 'text',
-              required: true,
-              fixed_width: false,
-              x: coord[0], // X coordinate from array
-              y: coord[1], // Y coordinate from array
-              page: pageNumber,
-              recipient_id: userDecode.user_id
-            });
-          });
-        }
-      });
+      //     // Loop through each coordinate on the current page to create custom fields
+      //     pageCoordinates.forEach(coord => {
+      //       fields.push({
+      //         type: 'text',
+      //         required: true,
+      //         fixed_width: false,
+      //         x: coord[0], // X coordinate from array
+      //         y: coord[1], // Y coordinate from array
+      //         page: pageNumber,
+      //         recipient_id: userDecode.user_id
+      //       });
+      //     });
+      //   }
+      // });
       
 
       console.log(`The PDF has ${pageCount} pages.`);
