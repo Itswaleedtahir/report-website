@@ -7,8 +7,8 @@ const { v4: uuidv4 } = require('uuid');
 const cors = require("cors")({ origin: true });
 const sgMail = require('@sendgrid/mail');
 const { Op, Sequelize } = require("sequelize");
-const { UplaodFileTemp, PdfEmail, labReport, labReoprtData, MakeCsv, pdfProcessor, findAllLabData, insertOrUpdateLabReport, logoExtraction, UploadFile,coordinateExtraction } = require("./helper/GpData");
-const { users, admin, pdf_email, labreport_data, lab_report, labreport_csv, ref_range_data, signedPdfs,printedPdfs } = require("./models/index");
+const { UplaodFileTemp, PdfEmail, labReport, labReoprtData, MakeCsv, pdfProcessor, findAllLabData, insertOrUpdateLabReport, logoExtraction, UploadFile, coordinateExtraction } = require("./helper/GpData");
+const { users, admin, pdf_email, labreport_data, lab_report, labreport_csv, ref_range_data, signedPdfs, printedPdfs } = require("./models/index");
 const fs = require('fs');
 const sequelize = require('./config/db'); // Import the configured instance
 const { PDFDocument } = require('pdf-lib');
@@ -282,10 +282,10 @@ exports.SendGridEmailListenerForEmailData = onRequest({
       const bufferDataString = req.body.toString('utf8');
       let parts = bufferDataString.split("--xYzZY");
       // Regular expression to find an email within the content
-// Regular expression to find the 'to' email in the 'Content-Disposition' section of a forwarded message
+      // Regular expression to find the 'to' email in the 'Content-Disposition' section of a forwarded message
 
 
-    
+
       let toAddress = "", fromAddress = "", DateReceivedEmail = "";
 
       // Regex patterns and extraction logic
@@ -308,11 +308,11 @@ exports.SendGridEmailListenerForEmailData = onRequest({
         console.log("to", toAddress);
         const match = toAddress.match(emailRegex);
         toAddress = match ? (match[1] || match[2]) : null; // Extract the email if a match is found
-        
+
         if (toAddress) {
-            console.log("Valid email:", toAddress);
+          console.log("Valid email:", toAddress);
         } else {
-            console.log("Invalid email format.");
+          console.log("Invalid email format.");
         }
         // Extract and handle attachments
         attachments = extractPDFs(bufferDataString);
@@ -325,52 +325,52 @@ exports.SendGridEmailListenerForEmailData = onRequest({
         return match ? match[1] : null;
       }
       if (bufferDataString.includes("Forwarded message")) {
-        
-      toAddress = extractForwardedEmail(bufferDataString);
-      
-      console.log('Forwarded to:', toAddress);
+
+        toAddress = extractForwardedEmail(bufferDataString);
+
+        console.log('Forwarded to:', toAddress);
       }
       // console.log("attachments count", attachments.length);
 
       for (const attachment of attachments) {
         // Define the uploads directory using the specified path
         const uploadsDir = path.join(__dirname, 'uploads');
-    
+
         // Base64 decoding and file writing process
         const pdfBuffer = Buffer.from(attachment.base64Content, 'base64');
         const timestamp = new Date().getTime();
         const filename = `output-${timestamp}.pdf`;
         const pdfPath = path.join(uploadsDir, filename);
-      // Define the path to save the PDF
-      
+        // Define the path to save the PDF
+
         try {
-            // Ensure the directory exists
-            fs.mkdirSync(uploadsDir, { recursive: true });
-            console.log('Directory created:', uploadsDir);
-    
-            // Write the PDF file
-            fs.writeFileSync(pdfPath, pdfBuffer);
-            console.log('File written:', pdfPath);
-            const { pdfname,destination } = await UplaodFileTemp(pdfPath);
-            const path = `https://storage.googleapis.com/gpdata01/${destination}` 
-            // Prepare job data
-            const jobData = {
-                pdfPath: path,
-                toAddress: toAddress,
-                fromAddress: fromAddress,
-                DateReceivedEmail: DateReceivedEmail
-            };
-    
-            // Add job to Redis queue
-            await addJobToRedis(jobData);
-            console.log(`Added job for PDF: ${pdfPath}`);
-    
+          // Ensure the directory exists
+          fs.mkdirSync(uploadsDir, { recursive: true });
+          console.log('Directory created:', uploadsDir);
+
+          // Write the PDF file
+          fs.writeFileSync(pdfPath, pdfBuffer);
+          console.log('File written:', pdfPath);
+          const { pdfname, destination } = await UplaodFileTemp(pdfPath);
+          const path = `https://storage.googleapis.com/gpdata01/${destination}`
+          // Prepare job data
+          const jobData = {
+            pdfPath: path,
+            toAddress: toAddress,
+            fromAddress: fromAddress,
+            DateReceivedEmail: DateReceivedEmail
+          };
+
+          // Add job to Redis queue
+          await addJobToRedis(jobData);
+          console.log(`Added job for PDF: ${pdfPath}`);
+
         } catch (err) {
-            console.error('Error handling file:', err);
-            continue; // Skip to the next iteration if an error occurs
+          console.error('Error handling file:', err);
+          continue; // Skip to the next iteration if an error occurs
         }
-    }
-    
+      }
+
       console.log("PDFs are queued for processing");
     } catch (error) {
       console.error("Error processing request:", error);
@@ -537,7 +537,7 @@ exports.searchLabReportsByFilters = onRequest(async (req, res) => {
         [pdf.id]: pdf.dataValues.pdfPath
       }), {});
 
-      console.log("pdfPathMapId",pdfPathMapId)
+      console.log("pdfPathMapId", pdfPathMapId)
 
       const pdfResults = await Promise.all(labReports.map(async (report) => {
         return Promise.all(report.labreport_data.map(async data => { // Ensure all inner promises are resolved
@@ -548,61 +548,61 @@ exports.searchLabReportsByFilters = onRequest(async (req, res) => {
       const flatPdfResults = pdfResults.flat(2); // You might need more or less flattening based on actual data structure
 
 
-      
-const pdfPathMap = flatPdfResults.reduce((acc, pdf) => {
-  if (Array.isArray(pdf)) { // Check if it's an array and handle accordingly
-    pdf.forEach(innerPdf => {
-      acc[innerPdf.id] = innerPdf.dataValues.pdfPath;
-    });
-  } else {
-    acc[pdf.id] = pdf.dataValues.pdfPath; // Handle non-array case
-  }
-  return acc;
-}, {});
 
-function transformData(reports, pdfPathMap, pdfPathMapId) {
-  console.log("pdf", pdfPathMap)
-  const uniqueReportsMap = new Map();
+      const pdfPathMap = flatPdfResults.reduce((acc, pdf) => {
+        if (Array.isArray(pdf)) { // Check if it's an array and handle accordingly
+          pdf.forEach(innerPdf => {
+            acc[innerPdf.id] = innerPdf.dataValues.pdfPath;
+          });
+        } else {
+          acc[pdf.id] = pdf.dataValues.pdfPath; // Handle non-array case
+        }
+        return acc;
+      }, {});
 
-  reports.forEach(report => {
-      if (report.labreport_data && report.labreport_data.length > 0) {
-          report.labreport_data.forEach(data => {
+      function transformData(reports, pdfPathMap, pdfPathMapId) {
+        console.log("pdf", pdfPathMap)
+        const uniqueReportsMap = new Map();
+
+        reports.forEach(report => {
+          if (report.labreport_data && report.labreport_data.length > 0) {
+            report.labreport_data.forEach(data => {
               const uniqueKey = `${report.protocolId}-${report.investigator}-${report.subjectId}-${report.dateOfCollection}-${report.timePoint}-${report.email_to}-${report.time_of_collection}-${data.lab_name}`;
 
               let existingEntry = uniqueReportsMap.get(uniqueKey);
               if (!existingEntry || existingEntry.value === "Pending" && data.value !== "Pending") {
-                  // Attempt to get the pdfPath from pdfPathMap using data.pdfEmailIdFk
-                  let pdfPath = pdfPathMap[data.pdfEmailIdFk];
+                // Attempt to get the pdfPath from pdfPathMap using data.pdfEmailIdFk
+                let pdfPath = pdfPathMap[data.pdfEmailIdFk];
 
-                  // If pdfPath is undefined, check pdfPathMapId
-                  if (!pdfPath) {
-                      pdfPath = pdfPathMapId[report.dataValues.pdfEmailIdfk];
-                  }
+                // If pdfPath is undefined, check pdfPathMapId
+                if (!pdfPath) {
+                  pdfPath = pdfPathMapId[report.dataValues.pdfEmailIdfk];
+                }
 
-                  // Log the pdfPath for debugging
-                  console.log("pdfPath", pdfPath);
+                // Log the pdfPath for debugging
+                console.log("pdfPath", pdfPath);
 
-                  const combinedData = {
-                      ...report.dataValues,
-                      ...data.dataValues,
-                      pdfpath: pdfPath || 'default/path/if/none/found', // Set a default path or handle as needed
-                      labreport_data: undefined
-                  };
-                  uniqueReportsMap.set(uniqueKey, combinedData);
+                const combinedData = {
+                  ...report.dataValues,
+                  ...data.dataValues,
+                  pdfpath: pdfPath || 'default/path/if/none/found', // Set a default path or handle as needed
+                  labreport_data: undefined
+                };
+                uniqueReportsMap.set(uniqueKey, combinedData);
               }
-          });
-      }
-  });
+            });
+          }
+        });
 
-  return Array.from(uniqueReportsMap.values());
-}
+        return Array.from(uniqueReportsMap.values());
+      }
 
 
       labReports.sort((a, b) => {
         return new Date(b.dataValues.dateOfCollection) - new Date(a.dataValues.dateOfCollection);
       });
 
-      const transformedReports = transformData(labReports, pdfPathMap,pdfPathMapId);
+      const transformedReports = transformData(labReports, pdfPathMap, pdfPathMapId);
       const startIndex = (page - 1) * pageSize;
       const paginatedLabReports = transformedReports.slice(startIndex, startIndex + pageSize);
 
@@ -1790,7 +1790,7 @@ exports.getEmployeeByEmail = onRequest(async (req, res) => {
 exports.deleteEmployee = onRequest(async (req, res) => {
   cors(req, res, async () => { // Enable CORS to handle cross-origin requests.
     try {
-      const { email,invitedBy} = req.body; // Extract the email from the request body.
+      const { email, invitedBy } = req.body; // Extract the email from the request body.
 
       // Check if the email parameter is provided.
       if (!email) {
@@ -1801,9 +1801,9 @@ exports.deleteEmployee = onRequest(async (req, res) => {
       // Attempt to delete the user from the database who matches the email and is an employee.
       const deleteUserEmail = await users.destroy({
         where: {
-          user_email:email,
+          user_email: email,
           isEmployee: true,
-          invitedBy:invitedBy
+          invitedBy: invitedBy
         }
       });
 
@@ -1900,15 +1900,14 @@ exports.onlyLabNameSearch = onRequest({
       const labToMasterMapping = JSON.parse(
         fs.readFileSync(path.join(__dirname, 'labNameMappings.json'), 'utf8')
       );
-
+      let originalNames=[]
       // Function to retrieve all original names for selected master names
       function getOriginalNamesForMasterNames(selectedMasters) {
-        const originalNames = [];
-      
+
         // Process all selectedMasters
         for (const master of selectedMasters) {
           let found = false;
-      
+
           // Check against all mappings
           for (const [original, mappedMaster] of Object.entries(labToMasterMapping)) {
             if (master === mappedMaster) {
@@ -1916,16 +1915,16 @@ exports.onlyLabNameSearch = onRequest({
               found = true; // Mark as found
             }
           }
-      
+
           // If no match was found, push the master directly
           if (!found) {
             originalNames.push(master);
           }
         }
-      
+
         return originalNames;
       }
-      
+
 
       // Get email_to from the request body
       let email_to = req.body.email_to;
@@ -1948,14 +1947,14 @@ exports.onlyLabNameSearch = onRequest({
 
       let labReports = [];
       let pdfPath = [];
-
+      let originalLabNames
       await Promise.all(req.body.search.map(async (search) => {
         const valueCondition = {};
-        
+
         // Get all original names based on selected master names
         let masterLabNames = JSON.parse(search.lab_name_json);
-        let originalLabNames = getOriginalNamesForMasterNames(masterLabNames);
-        console.log("names",originalLabNames)
+         originalLabNames = getOriginalNamesForMasterNames(masterLabNames);
+        console.log("names", originalLabNames)
         // Apply minValue and maxValue conditions
         if (search.minValue !== undefined && search.maxValue !== undefined) {
           valueCondition.value = { [Sequelize.Op.between]: [search.minValue, search.maxValue] };
@@ -1964,9 +1963,9 @@ exports.onlyLabNameSearch = onRequest({
         } else if (search.maxValue !== undefined) {
           valueCondition.value = { [Sequelize.Op.lte]: search.maxValue };
         }
-        
+
         // Exclude non-numerical statuses
-        valueCondition.value = { 
+        valueCondition.value = {
           ...valueCondition.value,
           [Sequelize.Op.not]: ['pending', 'positive', 'negative']
         };
@@ -1986,7 +1985,7 @@ exports.onlyLabNameSearch = onRequest({
             }]
           }]
         });
-        
+
         labReports = labReports.concat(result.flat());
       }));
       const pdfPaths = await Promise.all(labReports.map(async (report) => {
@@ -2000,9 +1999,8 @@ exports.onlyLabNameSearch = onRequest({
         ...acc,
         [pdf.id]: pdf.dataValues.pdfPath
       }), {});
-
-      // Helper function to transform and de-duplicate lab reports data
-      function transformData(reports, pdfPathMap) {
+       // Helper function to transform and de-duplicate lab reports data
+       function transformData(reports, pdfPathMap) {
         const uniqueReportsMap = new Map();
 
         reports.forEach(report => {
@@ -2026,7 +2024,61 @@ exports.onlyLabNameSearch = onRequest({
 
         return Array.from(uniqueReportsMap.values());
       }
+      const transformedReports = transformData(labReports, pdfPathMap);
+      // Check if user passed one lab name
+      const allLabNames = req.body.search.flatMap(search => JSON.parse(search.lab_name_json));
+      console.log("name",allLabNames)
+      console.log("master names",originalNames)
+      const uniqueLabNames = [...new Set(allLabNames)];
+      if(allLabNames.length == 1){
+        const page = parseInt(req.query.page) || 1;
+        const pageSize = parseInt(req.query.pageSize) || 10;
+        const startIndex = (page - 1) * pageSize;
+        const paginatedLabReports = transformedReports.slice(startIndex, startIndex + pageSize);
+  
+        return res.json({
+          data: transformedReports,
+          pagination: {
+            totalItems: transformedReports.length,
+            totalPages: Math.ceil(transformedReports.length / pageSize),
+            currentPage: page,
+            pageSize
+          }
+        });
+      }else{
+        // Group results by protocolId and subjectId
+  const reportsByProtocolAndSubject = transformedReports.reduce((acc, report) => {
+    const key = `${report.protocolId}-${report.subjectId}`;
+    acc[key] = (acc[key] || []).concat(report);
+    return acc;
+  }, {});
 
+  // Filter groups to only include those with multiple reports having different lab names
+  const filteredReports = Object.values(reportsByProtocolAndSubject)
+    .filter(reports => {
+      const labNamesInGroup = new Set(reports.map(report => report.lab_name));
+      return [...allLabNames].every(name => labNamesInGroup.has(name)); // Check if all required lab names are in the group
+    })
+    .flat();
+
+  if (filteredReports.length === 0) {
+    return res.status(404).send({ message: 'No matching records found.' });
+  }
+  const page = parseInt(req.query.page) || 1;
+  const pageSize = parseInt(req.query.pageSize) || 10;
+  const startIndex = (page - 1) * pageSize;
+  const paginatedLabReports = transformedReports.slice(startIndex, startIndex + pageSize);
+
+  return res.json({
+    data: filteredReports,
+    pagination: {
+      totalItems: filteredReports.length,
+      totalPages: Math.ceil(filteredReports.length / pageSize),
+      currentPage: page,
+      pageSize
+    }
+  });
+      }
       // Check if there's only one record
       // if (labReports.length === 1) {
       //   const transformedReports = transformData(labReports, pdfPathMap);
@@ -2047,25 +2099,25 @@ exports.onlyLabNameSearch = onRequest({
       //     report.protocolId === protocolId && report.subjectId === subjectId
       //   );
 
-        // if (allSame) {
-          const transformedReports = transformData(labReports, pdfPathMap);
-          const page = parseInt(req.query.page) || 1;
-          const pageSize = parseInt(req.query.pageSize) || 10;
-          const startIndex = (page - 1) * pageSize;
-          const paginatedLabReports = transformedReports.slice(startIndex, startIndex + pageSize);
+      // if (allSame) {
+      // const transformedReports = transformData(filteredReports, pdfPathMap);
+      // const page = parseInt(req.query.page) || 1;
+      // const pageSize = parseInt(req.query.pageSize) || 10;
+      // const startIndex = (page - 1) * pageSize;
+      // const paginatedLabReports = transformedReports.slice(startIndex, startIndex + pageSize);
 
-          return res.json({
-            data: transformedReports,
-            pagination: {
-              totalItems: transformedReports.length,
-              totalPages: Math.ceil(transformedReports.length / pageSize),
-              currentPage: page,
-              pageSize
-            }
-          });
-        // } else {
-        //   return res.status(400).send({ message: 'Records have different protocolId or subjectId' });
-        // }
+      // return res.json({
+      //   data: filteredReports,
+      //   pagination: {
+      //     totalItems: transformedReports.length,
+      //     totalPages: Math.ceil(transformedReports.length / pageSize),
+      //     currentPage: page,
+      //     pageSize
+      //   }
+      // });
+      // } else {
+      //   return res.status(400).send({ message: 'Records have different protocolId or subjectId' });
+      // }
       // } else {
       //   return res.status(400).send({ message: 'No lab reports found' });
       // }
@@ -2148,17 +2200,17 @@ exports.getLabReportNamesByEmailForSearch = onRequest(async (req, res) => {
         group: ['lab_name'] // Group by 'lab_name' to ensure uniqueness
       });
 
-     // Array of objects with original and master name pairs
-     const labNamesWithMaster = labReportData.map(data => {
-      const originalName = data.lab_name;
-      const masterName = labToMasterMapping[originalName] || originalName;
-      return masterName;
-    });
-// Use Set to ensure uniqueness
-const uniqueLabNames = Array.from(new Set(labNamesWithMaster));
+      // Array of objects with original and master name pairs
+      const labNamesWithMaster = labReportData.map(data => {
+        const originalName = data.lab_name;
+        const masterName = labToMasterMapping[originalName] || originalName;
+        return masterName;
+      });
+      // Use Set to ensure uniqueness
+      const uniqueLabNames = Array.from(new Set(labNamesWithMaster));
 
-// Return the array of unique values
-return res.json({ labNames: uniqueLabNames });
+      // Return the array of unique values
+      return res.json({ labNames: uniqueLabNames });
     } catch (error) {
       if (error.message === 'Forbidden') {
         return res.sendStatus(403); // Forbidden status if JWT verification fails
@@ -2196,27 +2248,27 @@ exports.signPdf = onRequest({
       const { pdfUrl } = req.body; // Use a URL in the request body
       const apiUrl = "https://gpdataservices.com/fetch-co-ordinates";
       const { coordinates } = await coordinateExtraction(pdfUrl, apiUrl);
-//       const coordinates = {
-//   "page_1": [
-//     [
-//       682, 365.021
-      
-//     ],
-//     [
-//       682, 380.771
-      
-//     ]
-//   ],
-//   "signature_coordinates": [
-//     199.13104248046875,
-//     840
-//   ],
-//   "date_coordinates": [
-//     563.7082214355469,
-//     850
-//   ]
-// }
-    
+      //       const coordinates = {
+      //   "page_1": [
+      //     [
+      //       682, 365.021
+
+      //     ],
+      //     [
+      //       682, 380.771
+
+      //     ]
+      //   ],
+      //   "signature_coordinates": [
+      //     199.13104248046875,
+      //     840
+      //   ],
+      //   "date_coordinates": [
+      //     563.7082214355469,
+      //     850
+      //   ]
+      // }
+
       console.log("coordinates", coordinates);
       const dateCoords = coordinates.date_coordinates;
       const signCoords = coordinates.signature_coordinates;
@@ -2279,7 +2331,7 @@ exports.signPdf = onRequest({
       //     });
       //   }
       // });
-      
+
 
       console.log(`The PDF has ${pageCount} pages.`);
       console.log("Fields for signing", fields);
@@ -2310,7 +2362,7 @@ exports.signPdf = onRequest({
             email: userDecode.email
           }
         ],
-        fields:[fields]
+        fields: [fields]
       });
 
       console.log("Signed PDF", signUrl.data.id);
@@ -2517,7 +2569,7 @@ exports.getPdfsForEmail = onRequest(async (req, res) => {
           {
             model: lab_report,
             as: 'labReports',
-            attributes: ['protocolId', 'subjectId', 'dateOfCollection','timePoint'],
+            attributes: ['protocolId', 'subjectId', 'dateOfCollection', 'timePoint'],
             where: {
               protocolId: { [Sequelize.Op.ne]: null },
               subjectId: { [Sequelize.Op.ne]: null }
@@ -2525,7 +2577,7 @@ exports.getPdfsForEmail = onRequest(async (req, res) => {
           }
         ]
       });
-      
+
       // Flatten the results
       const formattedResults = results.map(email => {
         const firstReport = email.labReports[0] || {}; // Take the first lab report, if it exists
@@ -2542,12 +2594,12 @@ exports.getPdfsForEmail = onRequest(async (req, res) => {
           protocolId: firstReport.protocolId || null,
           subjectId: firstReport.subjectId || null,
           dateOfCollection: firstReport.dateOfCollection || null,
-          timePoint:firstReport.timePoint || null
+          timePoint: firstReport.timePoint || null
         };
       });
-      
+
       console.log(formattedResults);
-      
+
 
       return res.status(201).send(formattedResults); // Send the fetched lab reports as a response
     } catch (error) {
@@ -2611,11 +2663,10 @@ exports.getArchiveUsersOnEmail = onRequest(async (req, res) => {
     }
   });
 });
-
 exports.getSignedPdf = onRequest(async (req, res) => {
   cors(req, res, async () => {
     const authHeader = req.headers['authorization'];
-    console.log("header", authHeader);  // Log the received authorization header for debugging
+    console.log("header", authHeader); // Log the received authorization header for debugging
     if (!authHeader) {
       return res.sendStatus(401); // Return Unauthorized if no authorization header is present
     }
@@ -2656,13 +2707,37 @@ exports.getSignedPdf = onRequest(async (req, res) => {
         where: {
           email_to: { [Sequelize.Op.in]: nonArchivedEmails },
           isSigned: true,
-          isPrinted:false
+          isPrinted: false
         }
       });
+      console.log("reports", labReports)
+      // Add page count for each PDF in the response
+      const labReportsWithPageCount = await Promise.all(
+        labReports.map(async (report) => {
+          console.log("report", report.dataValues.pdfUrl)
+          const pdfPath = `https://storage.googleapis.com/gpdata01/${report.dataValues.pdfUrl}`; // Assuming `filePath` contains the path to the PDF
+          try {
+            const response = await axios.get(pdfPath, { responseType: 'arraybuffer' });
+            const pdfBuffer = response.data;
+            const pdfDoc = await PDFDocument.load(pdfBuffer);
+            const pageCount = pdfDoc.getPageCount();
+            return {
+              ...report.dataValues, // Include the original report fields
+              pageCount // Add the page count
+            };
+          } catch (err) {
+            console.error(`Error reading PDF file for report ID ${report.id}:`, err);
+            return {
+              ...report.dataValues,
+              pageCount: null, // Set to null if there's an error reading the file
+            };
+          }
+        })
+      );
 
-      return res.status(201).send(labReports); // Send the signed PDFs as a response
+      return res.status(201).send(labReportsWithPageCount); // Send the signed PDFs with page counts as a response
     } catch (error) {
-      if (error === 'Forbidden') {
+      if (error.message === 'Forbidden') {
         return res.sendStatus(403); // Forbidden status if JWT verification fails
       }
       console.error('Error:', error); // Log any errors for debugging
@@ -2670,6 +2745,7 @@ exports.getSignedPdf = onRequest(async (req, res) => {
     }
   });
 });
+
 
 exports.deleteUser = onRequest(async (req, res) => {
   cors(req, res, async () => {
@@ -2852,8 +2928,8 @@ exports.getEmployeeClients = onRequest(async (req, res) => {
   })
 })
 
-exports.printedPdfs = onRequest(async (req,res) => {
-  cors(req,res,async()=>{
+exports.printedPdfs = onRequest(async (req, res) => {
+  cors(req, res, async () => {
     const authHeader = req.headers['authorization'];
     console.log("header", authHeader);  // Log the received authorization header for debugging
     if (!authHeader) {
@@ -2880,8 +2956,8 @@ exports.printedPdfs = onRequest(async (req,res) => {
       if (!user) {
         return res.status(404).json({ message: 'User not found' });
       }
-      const {printArray} = req.body
-      for(const print of printArray){
+      const { printArray } = req.body
+      for (const print of printArray) {
         const { id, pdf_id, pdfEmailIdfk, pdfUrl, isSigned, email_to, signedBy, protocolId, subjectId, dateOfCollection, timePoint } = print
         await signedPdfs.update(
           { isPrinted: true },
@@ -2891,10 +2967,10 @@ exports.printedPdfs = onRequest(async (req,res) => {
           pdfEmailIdfk,
           pdfUrl,
           isSigned,
-          isPrinted:true,
+          isPrinted: true,
           email_to,
           signedBy,
-          printedBy:loggedInEmail,
+          printedBy: loggedInEmail,
           protocolId,
           subjectId,
           dateOfCollection,
@@ -2955,7 +3031,7 @@ exports.getPrintedPdf = onRequest(async (req, res) => {
         where: {
           email_to: { [Sequelize.Op.in]: nonArchivedEmails },
           isSigned: true,
-          isPrinted:true
+          isPrinted: true
         }
       });
 
