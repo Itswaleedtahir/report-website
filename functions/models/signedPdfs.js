@@ -62,7 +62,7 @@ module.exports = (sequelize, DataTypes) => {
     },
     {
       tableName: "signedPdfs",
-      timestamps: false,
+      timestamps: true,
     }
   );
 

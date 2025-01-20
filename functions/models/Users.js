@@ -52,5 +52,12 @@ module.exports = (sequelize, DataTypes) => {
     }
   );
 
+  Signup.associate = function (models) {
+    Signup.hasMany(models.pdf_email, {
+      foreignKey: "userEmailFk",
+      as: "pdfs", // Alias for associated PDFs
+    });
+  };
+
   return Signup;
 };

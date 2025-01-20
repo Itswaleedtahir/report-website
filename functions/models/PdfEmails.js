@@ -33,6 +33,10 @@ module.exports = (sequelize, DataTypes) => {
         type: DataTypes.BOOLEAN,
       allowNull: false,
       defaultValue: false
+      },
+      fileSize: {
+        type: DataTypes.INTEGER,
+        allowNull: true
       }
     },
     {
@@ -44,6 +48,12 @@ module.exports = (sequelize, DataTypes) => {
     PdfEmails.belongsTo(models.pdf_email,  { 
       foreignKey: { name: 'userEmailFk' },
       as: 'userEmailId',})
+      
+      PdfEmails.belongsTo(models.users, {
+        foreignKey: { name: "userEmailFk" },
+        as: "user", // Alias for associated user
+      });
+
       PdfEmails.hasMany(models.lab_report, {
     foreignKey: 'pdfEmailIdfk',
     as: 'labReports'

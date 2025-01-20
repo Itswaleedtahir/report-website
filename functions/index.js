@@ -5,6 +5,7 @@ const jwt = require("jsonwebtoken");
 const axios = require('axios');
 const { v4: uuidv4 } = require('uuid');
 const cors = require("cors")({ origin: true });
+const { Parser } = require('json2csv');
 const sgMail = require('@sendgrid/mail');
 const { Op, Sequelize } = require("sequelize");
 const { UplaodFileTemp, PdfEmail, labReport, labReoprtData, MakeCsv, pdfProcessor, findAllLabData, insertOrUpdateLabReport, logoExtraction, UploadFile, coordinateExtraction } = require("./helper/GpData");
@@ -13,6 +14,8 @@ const fs = require('fs');
 const sequelize = require('./config/db'); // Import the configured instance
 const { PDFDocument } = require('pdf-lib');
 const signwell = require('@api/signwell');
+const { Storage } = require('@google-cloud/storage');
+const storage = new Storage();
 const path = require('path');
 const os = require('os');
 // const Queue = require('bull');
@@ -486,7 +489,7 @@ exports.searchLabReportsByFilters = onRequest(async (req, res) => {
       const page = parseInt(req.query.page) || 1;
       const pageSize = parseInt(req.query.pageSize) || 10;
 
-      const whereConditions = { email_to: { [Sequelize.Op.in]: nonArchivedEmails } };
+      const whereConditions = { email_to: { [Op.in]: nonArchivedEmails } };
       if (protocolId) whereConditions.protocolId = protocolId;
       if (subjectId) whereConditions.subjectId = subjectId;
       if (timePoint) whereConditions.timePoint = timePoint;
@@ -1900,9 +1903,10 @@ exports.onlyLabNameSearch = onRequest({
       const labToMasterMapping = JSON.parse(
         fs.readFileSync(path.join(__dirname, 'labNameMappings.json'), 'utf8')
       );
-      let originalNames=[]
+      let originalNamesToo=[]
       // Function to retrieve all original names for selected master names
       function getOriginalNamesForMasterNames(selectedMasters) {
+        let originalNames=[]
 
         // Process all selectedMasters
         for (const master of selectedMasters) {
@@ -1912,6 +1916,7 @@ exports.onlyLabNameSearch = onRequest({
           for (const [original, mappedMaster] of Object.entries(labToMasterMapping)) {
             if (master === mappedMaster) {
               originalNames.push(original);
+              originalNamesToo.push(original)
               found = true; // Mark as found
             }
           }
@@ -1947,13 +1952,15 @@ exports.onlyLabNameSearch = onRequest({
 
       let labReports = [];
       let pdfPath = [];
-      let originalLabNames
       await Promise.all(req.body.search.map(async (search) => {
+        let originalLabNames = [];
         const valueCondition = {};
-
+console.log("search",search)
         // Get all original names based on selected master names
         let masterLabNames = JSON.parse(search.lab_name_json);
-         originalLabNames = getOriginalNamesForMasterNames(masterLabNames);
+        console.log("master",masterLabNames)
+       const  originalLabNamesforSearch = getOriginalNamesForMasterNames(masterLabNames);
+       originalLabNames.push(originalLabNamesforSearch)
         console.log("names", originalLabNames)
         // Apply minValue and maxValue conditions
         if (search.minValue !== undefined && search.maxValue !== undefined) {
@@ -2025,10 +2032,9 @@ exports.onlyLabNameSearch = onRequest({
         return Array.from(uniqueReportsMap.values());
       }
       const transformedReports = transformData(labReports, pdfPathMap);
+      
       // Check if user passed one lab name
       const allLabNames = req.body.search.flatMap(search => JSON.parse(search.lab_name_json));
-      console.log("name",allLabNames)
-      console.log("master names",originalNames)
       const uniqueLabNames = [...new Set(allLabNames)];
       if(allLabNames.length == 1){
         const page = parseInt(req.query.page) || 1;
@@ -2052,14 +2058,41 @@ exports.onlyLabNameSearch = onRequest({
     acc[key] = (acc[key] || []).concat(report);
     return acc;
   }, {});
-
+  // return res.status(200).send(reportsByProtocolAndSubject)
+// Filter the groups based on the required lab names
+// const filteredReports = filterGroupsByRequiredLabNames(reportsByProtocolAndSubject, allLabNames);
   // Filter groups to only include those with multiple reports having different lab names
   const filteredReports = Object.values(reportsByProtocolAndSubject)
-    .filter(reports => {
-      const labNamesInGroup = new Set(reports.map(report => report.lab_name));
-      return [...allLabNames].every(name => labNamesInGroup.has(name)); // Check if all required lab names are in the group
-    })
-    .flat();
+  .filter(reports => {
+    // Normalize and split lab names from the report data
+    const labNamesInGroup = new Set(
+      reports.flatMap(report => 
+        typeof report.lab_name === 'string' ? report.lab_name : []
+      )
+    );
+
+    // Convert the Set to an array and normalize to uppercase
+    const labNamesArray = Array.from(labNamesInGroup, name => name.trim().toUpperCase());
+    console.log("labarray", labNamesArray);
+    const key = `${reports[0].protocolId}-${reports[0].subjectId}`;
+    console.log("key",key)
+
+    console.log("ALL NAMES", allLabNames.map(name => name.toUpperCase()));
+
+    // Check if all required lab names are in the group (considering partial matches)
+    // return allLabNames.every(requiredName => {
+    //   // Extract key terms from requiredName
+    //   const keyTerms = requiredName.toUpperCase().split(' ').filter(term => term.length > 3); // ignoring short words
+    //   console.log("keyterms",keyTerms)
+    //   return labNamesArray.some(labName => 
+        
+    //     keyTerms.every(term => labName.includes(term))
+    //   );
+    // });
+    // Compare the count of unique lab names to the count of required lab names
+    return labNamesArray.length >= allLabNames.length;
+  })
+  .flat();
 
   if (filteredReports.length === 0) {
     return res.status(404).send({ message: 'No matching records found.' });
@@ -2248,30 +2281,230 @@ exports.signPdf = onRequest({
       const { pdfUrl } = req.body; // Use a URL in the request body
       const apiUrl = "https://gpdataservices.com/fetch-co-ordinates";
       const { coordinates } = await coordinateExtraction(pdfUrl, apiUrl);
-      //       const coordinates = {
-      //   "page_1": [
-      //     [
-      //       682, 365.021
-
-      //     ],
-      //     [
-      //       682, 380.771
-
-      //     ]
-      //   ],
-      //   "signature_coordinates": [
-      //     199.13104248046875,
-      //     840
-      //   ],
-      //   "date_coordinates": [
-      //     563.7082214355469,
-      //     850
-      //   ]
-      // }
-
+            // const coordinates = 
+            // {
+            //   "page_1": [
+            //     [
+            //       762.476,
+            //       439.06509375,
+            //       "BASE"
+            //     ],
+            //     [
+            //       762.476,
+            //       453.46509375000005,
+            //       "met"
+            //     ],
+            //     [
+            //       762.476,
+            //       482.26509375,
+            //       "BASE"
+            //     ],
+            //     [
+            //       762.476,
+            //       496.66509375000004,
+            //       "met"
+            //     ],
+            //     [
+            //       762.476,
+            //       525.46509375,
+            //       "BL"
+            //     ],
+            //     [
+            //       762.476,
+            //       539.86509375,
+            //       "met"
+            //     ],
+            //     [
+            //       762.476,
+            //       568.66509375,
+            //       "BASE"
+            //     ],
+            //     [
+            //       762.476,
+            //       583.0650937500001,
+            //       "met"
+            //     ],
+            //     [
+            //       762.476,
+            //       611.86509375,
+            //       "BASE"
+            //     ],
+            //     [
+            //       762.476,
+            //       626.26509375,
+            //       "met"
+            //     ],
+            //     [
+            //       762.476,
+            //       655.0650937500001,
+            //       "GRADING"
+            //     ],
+            //     [
+            //       762.476,
+            //       669.4650937499999,
+            //       "]"
+            //     ],
+            //     [
+            //       762.476,
+            //       698.26509375,
+            //       "GRADING"
+            //     ],
+            //     [
+            //       762.476,
+            //       712.66509375,
+            //       "Met"
+            //     ],
+            //     [
+            //       762.476,
+            //       741.4650937499999,
+            //       "GRADING"
+            //     ],
+            //     [
+            //       762.476,
+            //       755.8650937499999,
+            //       "Met"
+            //     ],
+            //     [
+            //       762.476,
+            //       784.66509375,
+            //       "GRADING"
+            //     ],
+            //     [
+            //       762.476,
+            //       827.8650937499999,
+            //       "GRADING"
+            //     ],
+            //     {
+            //       "signature_coordinates": [
+            //         176.500732421875,
+            //         875.998046875
+            //       ],
+            //       "date_coordinates": [
+            //         530.000732421875,
+            //         885.998046875
+            //       ],
+            //       "comments_coordinates": [
+            //         323.500732421875,
+            //         858.5968017578125
+            //       ]
+            //     }
+            //   ],
+            //   "page_2": [
+            //     [
+            //       762.476,
+            //       442.90509375000005,
+            //       "GRADING"
+            //     ],
+            //     [
+            //       762.476,
+            //       442.90509375000005,
+            //       "GRADING"
+            //     ],
+            //     [
+            //       762.476,
+            //       457.30509375,
+            //       "Met"
+            //     ],
+            //     [
+            //       762.476,
+            //       457.30509375,
+            //       "Met"
+            //     ],
+            //     [
+            //       762.476,
+            //       457.30509375,
+            //       "Met"
+            //     ],
+            //     [
+            //       762.476,
+            //       457.30509375,
+            //       "Met"
+            //     ],
+            //     [
+            //       762.476,
+            //       457.30509375,
+            //       "Met"
+            //     ],
+            //     [
+            //       762.476,
+            //       457.30509375,
+            //       "Met"
+            //     ],
+            //     [
+            //       762.476,
+            //       486.10509375000004,
+            //       "GRADING"
+            //     ],
+            //     [
+            //       762.476,
+            //       486.10509375000004,
+            //       "GRADING"
+            //     ],
+            //     [
+            //       762.476,
+            //       500.50509375,
+            //       "Met"
+            //     ],
+            //     [
+            //       762.476,
+            //       500.50509375,
+            //       "Met"
+            //     ],
+            //     [
+            //       762.476,
+            //       500.50509375,
+            //       "Met"
+            //     ],
+            //     [
+            //       762.476,
+            //       500.50509375,
+            //       "Met"
+            //     ],
+            //     [
+            //       762.476,
+            //       500.50509375,
+            //       "Met"
+            //     ],
+            //     [
+            //       762.476,
+            //       529.30509375,
+            //       "GRADING"
+            //     ],
+            //     [
+            //       762.476,
+            //       529.30509375,
+            //       "GRADING"
+            //     ],
+            //     [
+            //       762.476,
+            //       543.7050937500001,
+            //       "]"
+            //     ],
+            //     [
+            //       762.476,
+            //       799.3546875000001,
+            //       "required."
+            //     ],
+            //     {
+            //       "signature_coordinates": [
+            //         176.500732421875,
+            //         830.998046875
+            //       ],
+            //       "date_coordinates": [
+            //         530.000732421875,
+            //         840.998046875
+            //       ],
+            //       "comments_coordinates": [
+            //         323.500732421875,
+            //         814.498046875
+            //       ]
+            //     }
+            //   ]
+            // }
       console.log("coordinates", coordinates);
       const dateCoords = coordinates.date_coordinates;
       const signCoords = coordinates.signature_coordinates;
+      const commentCoords = coordinates.comments_coordinates
 
       const parts = pdfUrl.split('/');
       const pdfName = parts[parts.length - 1];
@@ -2283,33 +2516,73 @@ exports.signPdf = onRequest({
 
       const fields = [];
 
-      // Add the original signature and date fields for each page
-      for (let i = 1; i <= pageCount; i++) {
-        fields.push(
-          {
-            type: 'signature',
-            required: true,
+     // Assuming pageCount and userDecode are defined elsewhere in your code
+     for (let i = 1; i <= pageCount; i++) {
+      // Fetch coordinates for the current page
+      const pageCoordinates = coordinates[`page_${i}`];
+      
+      pageCoordinates.forEach(coord => {
+        console.log("coorde",coord)
+        if (coord.signature_coordinates) {
+          const signCoords = coord.signature_coordinates;
+          const dateCoords = coord.date_coordinates;
+          const commentCoords = coord.comments_coordinates;
+    
+          // Push fields for signature, date, and comments if they exist
+          fields.push(
+            {
+              type: 'signature',
+              required: true,
+              fixed_width: false,
+              x: signCoords[0], // X coordinate for signature
+              y: signCoords[1], // Y coordinate for signature
+              page: i,
+              recipient_id: userDecode.user_id
+            },
+            {
+              type: 'date',
+              required: true,
+              fixed_width: false,
+              lock_sign_date: true, // Locks the date to auto-populate
+              x: dateCoords[0], // X coordinate for date
+              y: dateCoords[1], // Y coordinate for date
+              page: i,
+              recipient_id: userDecode.user_id,
+              date_format: 'MM/DD/YYYY'
+            }
+          );
+    
+          // Check if comments_coordinates exists and add a text field
+          if (commentCoords) {
+            fields.push(
+              {
+                type: 'text',
+                required: false,
+                fixed_width: false,
+                x: commentCoords[0], // X coordinate for comments
+                y: commentCoords[1], // Y coordinate for comments
+                page: i,
+                recipient_id: userDecode.user_id,
+              }
+            );
+          }
+        }else {
+          // For all other coordinates (non-signature, date, or comments), add them as text fields
+          fields.push({
+            type: 'text',
+            required: false,
             fixed_width: false,
-            x: signCoords[0], // X coordinate for signature from coordinates object
-            y: signCoords[1], // Y coordinate for signature from coordinates object
+            x: coord[0], // X coordinate
+            y: coord[1], // Y coordinate
             page: i,
             recipient_id: userDecode.user_id
-          },
-          {
-            type: 'date',
-            required: true,
-            fixed_width: false,
-            lock_sign_date: true, // Set true if you want the date to auto-populate and lock
-            x: dateCoords[0], // X coordinate for date from coordinates object
-            y: dateCoords[1], // Y coordinate for date from coordinates object
-            page: i,
-            recipient_id: userDecode.user_id,
-            date_format: 'MM/DD/YYYY' // Specify the format for the date
-          }
-        );
-      }
+          });
+        }
+      });
+    }
+    
 
-      // // Add additional fields based on specific coordinates for each page
+      // Add additional fields based on specific coordinates for each page
       // Object.keys(coordinates).forEach((pageKey) => {
       //   if (pageKey.startsWith('page')) {
       //     console.log("pagw",pageKey)
@@ -2321,10 +2594,10 @@ exports.signPdf = onRequest({
       //     pageCoordinates.forEach(coord => {
       //       fields.push({
       //         type: 'text',
-      //         required: true,
+      //         required: false,
       //         fixed_width: false,
-      //         x: coord[0], // X coordinate from array
-      //         y: coord[1], // Y coordinate from array
+      //         x: coord[0], // Multiply X coordinate
+      //         y: coord[1] , // Multiply Y coordinate
       //         page: pageNumber,
       //         recipient_id: userDecode.user_id
       //       });
@@ -2827,6 +3100,15 @@ exports.deleteUser = onRequest(async (req, res) => {
           },
           transaction: t
         });
+         //  Deleting records from lab_report
+         const deleteSignedPdfs = await signedPdfs.destroy({
+          where: {
+            pdfEmailIdfk: {
+              [Op.in]: emailIds
+            }
+          },
+          transaction: t
+        });
 
         // Deleting records from lab_report
         const deletePdfEmail = await pdf_email.destroy({
@@ -2854,7 +3136,7 @@ exports.deleteUser = onRequest(async (req, res) => {
         });
         // return{deletePdfEmail}
 
-        return { deleteData, deleteCsv, deleteLabReport, deletePdfEmail, invitedUsersDeletion, deleteUser };
+        return { deleteData, deleteCsv, deleteLabReport, deletePdfEmail, invitedUsersDeletion, deleteUser,deleteSignedPdfs };
       });
 
       console.log("Deletion results:", result);
@@ -3045,3 +3327,750 @@ exports.getPrintedPdf = onRequest(async (req, res) => {
     }
   });
 });
+
+exports.getAnalyticsData = onRequest(async (req, res) => {
+  cors(req, res, async () => {
+    try {
+      // Fetch all employees grouped by their invitedBy
+      const employees = await users.findAll({
+        where: {
+          isEmployee: true,
+        },
+        attributes: ["id", "user_email", "invitedBy", "createdAt", "updatedAt"],
+      });
+
+      // Create a mapping of employees by invitedBy
+      const employeesByInviter = employees.reduce((acc, employee) => {
+        if (employee.invitedBy) {
+          acc[employee.invitedBy] = acc[employee.invitedBy] || [];
+          acc[employee.invitedBy].push({
+            employeeId: employee.id,
+            employeeEmail: employee.user_email,
+            employeeCreatedAt: employee.createdAt,
+            employeeUpdatedAt: employee.updatedAt,
+          });
+        }
+        return acc;
+      }, {});
+
+      // Fetch clients and associated PDFs and lab reports
+      const clients = await users.findAndCountAll({
+        where: {
+          isEmployee: false,
+        },
+        include: [
+          {
+            model: pdf_email,
+            as: "pdfs",
+            include: [
+              {
+                model: lab_report,
+                as: "labReports",
+              },
+            ],
+          },
+        ],
+        distinct: true,
+      });
+
+      // Helper function to format file sizes
+      function formatFileSize(sizeInKB) {
+        if (sizeInKB > 1000) {
+          const sizeInMB = (sizeInKB / 1000).toFixed(2); // Convert to MB and round to 2 decimal places
+          return `${sizeInMB} MB`;
+        }
+        return `${sizeInKB.toFixed(2)} KB`; // Round to 2 decimal places for KB
+      }
+
+      // Calculate the total PDF count, total size, and format client data
+      const formattedClients = clients.rows.map((user) => {
+        const invitedEmployees = employeesByInviter[user.user_email] || [];
+
+        // Calculate the total file size for all PDFs
+        const totalFileSizeInKB = user.pdfs.reduce((total, pdf) => {
+          return total + (pdf.fileSize || 0); // Add fileSize or 0 if null
+        }, 0);
+
+        return {
+          userId: user.id,
+          userEmail: user.user_email,
+          pdfCount: user.pdfs.length,
+          totalFileSize: formatFileSize(totalFileSizeInKB), // Format the file size
+          invitedEmployeesCount: invitedEmployees.length,
+          invitedEmployees,
+          pdfs: user.pdfs.map((pdf) => {
+            return pdf.labReports.length > 0
+              ? pdf.labReports.map((labReport) => ({
+                  pdfId: pdf.id,
+                  emailTo: pdf.email_to,
+                  receivedAt: pdf.receivedAt,
+                  pdfPath: pdf.pdfPath,
+                  isSigned: pdf.isSigned,
+                  pdfCreatedAt: pdf.createdAt,
+                  pdfUpdatedAt: pdf.updatedAt,
+                  fileSize: formatFileSize(pdf.fileSize || 0), // Format the file size
+                  labReportId: labReport.id,
+                  protocolId: labReport.protocolId,
+                  investigator: labReport.investigator,
+                  subjectId: labReport.subjectId,
+                  dateOfCollection: labReport.dateOfCollection,
+                  timePoint: labReport.timePoint,
+                  timeOfCollection: labReport.time_of_collection,
+                  labReportCreatedAt: labReport.createdAt,
+                }))
+              : [
+                  {
+                    pdfId: pdf.id,
+                    emailTo: pdf.email_to,
+                    receivedAt: pdf.receivedAt,
+                    pdfPath: pdf.pdfPath,
+                    isSigned: pdf.isSigned,
+                    pdfCreatedAt: pdf.createdAt,
+                    pdfUpdatedAt: pdf.updatedAt,
+                    fileSize: formatFileSize(pdf.fileSize || 0), // Format the file size
+                  },
+                ];
+          }).flat(),
+        };
+      });
+
+      // Calculate the total size across all clients
+      const totalSizeAcrossClientsInKB = formattedClients.reduce(
+        (total, client) => {
+          const size = parseFloat(client.totalFileSize.replace(/[^0-9.]/g, ""));
+          const isMB = client.totalFileSize.includes("MB");
+          return total + (isMB ? size * 1000 : size); // Convert MB to KB before summing
+        },
+        0
+      );
+
+      // Format the total size across clients
+      const totalSizeAcrossClients = formatFileSize(totalSizeAcrossClientsInKB);
+
+      // Return the response
+      return res.status(200).send({
+        clientCount: clients.count,
+        totalPdfCount: clients.rows.reduce((count, client) => count + client.pdfs.length, 0),
+        totalSizeAcrossClients, // Add the total size across all clients
+        formattedClients,
+      });
+    } catch (error) {
+      console.error("Error:", error);
+      return res.status(500).send({ message: "Internal server error", error });
+    }
+  });
+});
+
+
+
+
+exports.getSignedAndPrintedPdfs = onRequest(async (req, res) => {
+  cors(req, res, async () => {
+    try {
+      // Fetch signed PDFs where isSigned is true
+      const SignedPdfs = await signedPdfs.findAll({
+        where: {
+          isSigned: true,
+        },
+        attributes: [
+          "pdf_id",
+          "pdfEmailIdfk",
+          "email_to",
+          "signedBy",
+          "protocolId",
+          "subjectId",
+          "dateOfCollection",
+          "timePoint",
+          "pdfUrl",
+        ],
+      });
+
+      // Fetch printed PDFs where isPrinted is true
+      const PrintedPdfs = await printedPdfs.findAll({
+        where: {
+          isPrinted: true,
+        },
+        attributes: [
+          "pdfEmailIdfk",
+          "email_to",
+          "printedBy",
+          "protocolId",
+          "subjectId",
+          "dateOfCollection",
+          "timePoint",
+          "pdfUrl",
+        ],
+      });
+
+      // Combine and group by client email (email_to)
+      const groupedByClient = {};
+
+      // Add signed PDFs to the grouped structure
+      SignedPdfs.forEach((pdf) => {
+        const clientEmail = pdf.email_to || "Unknown";
+        if (!groupedByClient[clientEmail]) {
+          groupedByClient[clientEmail] = {
+            clientEmail,
+            signedPdfs: [],
+            printedPdfs: [],
+            signedPdfCount: 0,
+            printedPdfCount: 0,
+          };
+        }
+        groupedByClient[clientEmail].signedPdfs.push({
+          pdfId: pdf.pdf_id,
+          pdfEmailIdfk: pdf.pdfEmailIdfk,
+          signedBy: pdf.signedBy,
+          protocolId: pdf.protocolId,
+          subjectId: pdf.subjectId,
+          dateOfCollection: pdf.dateOfCollection,
+          timePoint: pdf.timePoint,
+          pdfUrl: pdf.pdfUrl,
+        });
+        groupedByClient[clientEmail].signedPdfCount++;
+      });
+
+      // Add printed PDFs to the grouped structure
+      PrintedPdfs.forEach((pdf) => {
+        const clientEmail = pdf.email_to || "Unknown";
+        if (!groupedByClient[clientEmail]) {
+          groupedByClient[clientEmail] = {
+            clientEmail,
+            signedPdfs: [],
+            printedPdfs: [],
+            signedPdfCount: 0,
+            printedPdfCount: 0,
+          };
+        }
+        groupedByClient[clientEmail].printedPdfs.push({
+          pdfEmailIdfk: pdf.pdfEmailIdfk,
+          printedBy: pdf.printedBy,
+          protocolId: pdf.protocolId,
+          subjectId: pdf.subjectId,
+          dateOfCollection: pdf.dateOfCollection,
+          timePoint: pdf.timePoint,
+          pdfUrl: pdf.pdfUrl,
+        });
+        groupedByClient[clientEmail].printedPdfCount++;
+      });
+
+      // Convert the grouped object to an array for easier representation
+      const response = Object.values(groupedByClient);
+
+      // Return the response
+      return res.status(200).send({
+        totalSignedPdfCount: SignedPdfs.length,
+        totalPrintedPdfCount: PrintedPdfs.length,
+        data: response,
+      });
+    } catch (error) {
+      console.error("Error fetching signed and printed PDFs:", error);
+      return res.status(500).send({
+        message: "Internal server error",
+        error,
+      });
+    }
+  });
+});
+
+exports.getClientData = onRequest(async (req, res) => {
+  cors(req, res, async () => {
+    try {
+      const { clientEmail, startDate, endDate } = req.body;
+
+      // Validate clientEmail, startDate, and endDate
+      if (!clientEmail || !startDate || !endDate) {
+        return res.status(400).send({ message: "Missing required fields" });
+      }
+
+      // Fetch client data
+      const client = await users.findOne({
+        where: {
+          user_email:clientEmail,
+          isEmployee: false,
+        },})
+     // Fetch clients and associated PDFs and lab reports
+     const clients = await users.findAndCountAll({
+      where: {
+        user_email:clientEmail,
+        isEmployee: false,
+      },
+      include: [
+        {
+          model: pdf_email,
+          as: "pdfs",
+          where: {
+            createdAt: {
+              [Op.between]: [new Date(startDate), new Date(endDate)]
+            }
+          },
+          include: [
+            {
+              model: lab_report,
+              as: "labReports",
+            },
+          ],
+        },
+      ],
+      distinct: true,
+    });
+    console.log("Clients",clients)
+    // return res.status(200).send(clients)
+      if (!client) {
+        return res.status(404).send({ message: "Client not found" });
+      }
+
+      // Fetch all employees invited by this client
+      const employees = await users.findAll({
+        where: {
+          invitedBy: clientEmail,
+          isEmployee: true,
+            createdAt: {
+              [Op.between]: [new Date(startDate), new Date(endDate)]
+            }
+        }
+      });
+      console.log("client",client)
+      // Fetch all PDFs for this client
+      const pdfs = await pdf_email.findAll({
+        where: {
+          userEmailFk: client.dataValues.id,
+          createdAt: {
+            [Op.between]: [new Date(startDate), new Date(endDate)]
+          }
+        }
+      });
+
+      // Extract IDs from pdfEmails
+      const pdfEmailIds = pdfs.map(pdf => pdf.id);
+
+      // Fetch signed and printed PDFs based on those IDs
+      const signedPdfsForClient = await signedPdfs.findAll({
+        where: {
+          email_to: clientEmail,
+          isSigned: true , // Ensure to only fetch PDFs that are signed
+          createdAt: {
+            [Op.between]: [new Date(startDate), new Date(endDate)]
+          }
+        }
+      });
+      const printedPdfsForClient = await printedPdfs.findAll({
+        where: {
+          email_to: clientEmail,
+          isPrinted: true, // Ensure to only fetch PDFs that are printed
+          createdAt: {
+            [Op.between]: [new Date(startDate), new Date(endDate)]
+          }
+        }
+      });
+
+      // Calculate the total file size for all PDFs
+      const totalFileSizeInKB = pdfs.reduce((total, pdf) => total + (pdf.fileSize || 0), 0);
+
+      // Helper function to format file sizes
+      function formatFileSize(sizeInKB) {
+        if (sizeInKB > 1000) {
+          const sizeInMB = (sizeInKB / 1000).toFixed(2);
+          return `${sizeInMB} MB`;
+        }
+        return `${sizeInKB.toFixed(2)} KB`;
+      }
+    // Accessing the pdfs array safely
+    const clientPdfs = clients.rows && clients.rows.length > 0 && clients.rows[0].pdfs ? clients.rows[0].pdfs : [];
+      console.log("deployed")
+    console.log("clientPdfs", clientPdfs); // This should now safely log the pdfs or an empty array.
+      const formattedClient = {
+        clientInfo: client,
+        employeeCount: employees.length,
+        totalPdfsCount: pdfs.length,
+        signedPdfsCount: signedPdfsForClient.length,
+        printedPdfsCount: printedPdfsForClient.length,
+        totalFileSize: formatFileSize(totalFileSizeInKB),
+        employees: employees,
+        pdfs:clientPdfs.map((pdf) => {
+          return pdf.labReports.length > 0
+            ? pdf.labReports.map((labReport) => ({
+                pdfId: pdf.id,
+                emailTo: pdf.email_to,
+                receivedAt: pdf.receivedAt,
+                pdfPath: pdf.pdfPath,
+                isSigned: pdf.isSigned,
+                pdfCreatedAt: pdf.createdAt,
+                pdfUpdatedAt: pdf.updatedAt,
+                fileSize: formatFileSize(pdf.fileSize || 0), // Format the file size
+                labReportId: labReport.id,
+                protocolId: labReport.protocolId,
+                investigator: labReport.investigator,
+                subjectId: labReport.subjectId,
+                dateOfCollection: labReport.dateOfCollection,
+                timePoint: labReport.timePoint,
+                timeOfCollection: labReport.time_of_collection,
+                labReportCreatedAt: labReport.createdAt,
+              }))
+            : [
+                {
+                  pdfId: pdf.id,
+                  emailTo: pdf.email_to,
+                  receivedAt: pdf.receivedAt,
+                  pdfPath: pdf.pdfPath,
+                  isSigned: pdf.isSigned,
+                  pdfCreatedAt: pdf.createdAt,
+                  pdfUpdatedAt: pdf.updatedAt,
+                  fileSize: formatFileSize(pdf.fileSize || 0), // Format the file size
+                },
+              ];
+        }).flat(),
+        signedPdfsDetails: signedPdfsForClient,
+        printedPdfsDetails: printedPdfsForClient
+      };
+
+      // Return the response
+      return res.status(200).send(formattedClient);
+    } catch (error) {
+      console.error("Error:", error);
+      return res.status(500).send({ message: "Internal server error", error });
+    }
+  });
+});
+exports.getClients = onRequest(async(req,res)=>{
+  cors(req,res,async()=>{
+    try {
+      const clients = await users.findAll({
+        where:{
+          isEmployee:false,
+          isArchived:false
+        }
+      })
+      return res.status(201).send({Clietns: clients})
+    } catch (error) {
+      console.error("Error fetching signed and printed PDFs:", error);
+      return res.status(500).send({
+        message: "Internal server error",
+        error,
+      });
+    }
+  })
+})
+
+
+exports.getPdfCounts = onRequest(async (req, res) => {
+  cors(req, res, async () => {
+    try {
+      const today = new Date();
+      const startOfDay = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+      const startOf30Days = new Date(today.setDate(today.getDate() - 30));
+      const startOfLastMonth = new Date(today.getFullYear(), today.getMonth() - 1, 1);
+      const endOfLastMonth = new Date(today.getFullYear(), today.getMonth(), 0);
+      const startOfYear = new Date(today.getFullYear(), 0, 1);
+
+      // Query to get counts
+      const todayCount = await pdf_email.count({
+        where: {
+          receivedAt: {
+            [Op.gte]: startOfDay,
+          },
+        },
+      });
+
+      const last30DaysCount = await pdf_email.count({
+        where: {
+          receivedAt: {
+            [Op.gte]: startOf30Days,
+          },
+        },
+      });
+
+      const lastMonthCount = await pdf_email.count({
+        where: {
+          receivedAt: {
+            [Op.gte]: startOfLastMonth,
+            [Op.lte]: endOfLastMonth,
+          },
+        },
+      });
+
+      const yearlyCount = await pdf_email.count({
+        where: {
+          receivedAt: {
+            [Op.gte]: startOfYear,
+          },
+        },
+      });
+
+      const formatDate = (date) => {
+        const year = date.getFullYear();
+        const month = String(date.getMonth() + 1).padStart(2, '0'); // Months are 0-based
+        const day = String(date.getDate()).padStart(2, '0');
+        return `${year}-${month}-${day}`;
+      };
+      // Response structure
+         // Response structure
+         const response = {
+          today: {
+            date: formatDate(startOfDay),
+            count: todayCount,
+          },
+          last30Days: {
+            startDate: formatDate(startOf30Days),
+            count: last30DaysCount,
+          },
+          lastMonth: {
+            startDate: formatDate(startOfLastMonth),
+            endDate: formatDate(endOfLastMonth),
+            count: lastMonthCount,
+          },
+          year: {
+            startDate: formatDate(startOfYear),
+            count: yearlyCount,
+          },
+        };
+
+      return res.status(200).send(response);
+    } catch (error) {
+      console.error("Error fetching PDF counts:", error);
+      return res.status(500).send({
+        message: "Internal server error",
+        error,
+      });
+    }
+  });
+});
+async function getFileSizeInKB(bucketName, fileName) {
+  try {
+      const [metadata] = await storage.bucket(bucketName).file(fileName).getMetadata();
+      const sizeInKB = metadata.size / 1024;
+      return parseFloat(sizeInKB.toFixed(2)); // Converts size to kilobytes and rounds to two decimals
+  } catch (error) {
+      console.error(`Error retrieving file size for ${fileName}: ${error.message}`);
+      return null;
+  }
+}
+
+exports.updatePdf = onRequest({
+  timeoutSeconds: 3600,
+  memory: "1GiB",
+},async (req,res)=>{
+  try {
+    const pdfs = await pdf_email.findAll();
+    for (const pdf of pdfs) {
+      const sizeInKB = await getFileSizeInKB('gpdata01', pdf.pdfPath); // Use your actual bucket name
+      if (sizeInKB !== null) {
+          await pdf.update({ fileSize: sizeInKB });
+          console.log(`Updated PDF ${pdf.id} size to ${sizeInKB} KB.`);
+      } else {
+          console.log(`Failed to get file size for PDF ${pdf.id}.`);
+      }
+    }
+} catch (error) {
+    console.error(`Error updating PDF sizes: ${error.message}`);
+}
+})
+
+exports.downloadDb = onRequest(async(req,res)=>{
+  cors(req,res,async()=>{
+    try {
+      // Fetch data from all models
+      const tables = [
+          { model: admin, name: 'Admin' },
+          { model: users, name: 'Users' },
+          { model: pdf_email, name: 'PDF Emails' },
+          { model: ref_range_data, name: 'Reference Range Data' },
+          { model: lab_report, name: 'Lab Reports' },
+          { model: labreport_data, name: 'Lab Report Data' },
+          { model: signedPdfs, name: 'Signed PDFs' },
+          { model: printedPdfs, name: 'Printed PDFs' },
+      ];
+
+      let csvContent = '';
+
+      for (const { model, name } of tables) {
+          const data = await model.findAll({ raw: true });
+          if (data.length > 0) {
+              // Include a table name header
+              csvContent += `Table Name: ${name}\r\n`;
+
+              // Convert data to CSV format
+              const parser = new Parser({ header: true, fields: Object.keys(data[0]) });
+              const csv = parser.parse(data);
+              csvContent += csv + '\r\n\r\n'; // Add extra lines between tables
+          }
+      }
+
+      // Set headers to prompt download
+      res.header('Content-Type', 'text/csv');
+      res.attachment('full-database.csv');
+      res.send(csvContent);
+  } catch (error) {
+      console.error('Failed to download database:', error);
+      res.status(500).send('Error in downloading the CSV file');
+  }
+  })
+})
+
+exports.signPdfTest = onRequest({
+  timeoutSeconds: 3600, // Set the function timeout to 1 hour
+}, async (req, res) => {
+  cors(req, res, async () => {
+  
+
+    try {
+
+
+      const { pdfUrl ,coordinates  } = req.body; // Use a URL in the request body
+      console.log("coordinates", coordinates);
+      const dateCoords = coordinates.date_coordinates;
+      const signCoords = coordinates.signature_coordinates;
+      const commentCoords = coordinates.comments_coordinates
+
+      const parts = pdfUrl.split('/');
+      const pdfName = parts[parts.length - 1];
+
+      const response = await axios.get(pdfUrl, { responseType: 'arraybuffer' });
+      const pdfBuffer = response.data;
+      const pdfDoc = await PDFDocument.load(pdfBuffer);
+      const pageCount = pdfDoc.getPageCount();
+
+      const fields = [];
+
+     // Assuming pageCount and userDecode are defined elsewhere in your code
+     for (let i = 1; i <= pageCount; i++) {
+      // Fetch coordinates for the current page
+      const pageCoordinates = coordinates[`page_${i}`];
+      
+      pageCoordinates.forEach(coord => {
+        console.log("coorde",coord)
+        if (coord.signature_coordinates) {
+          const signCoords = coord.signature_coordinates;
+          const dateCoords = coord.date_coordinates;
+          const commentCoords = coord.comments_coordinates;
+    
+          // Push fields for signature, date, and comments if they exist
+          fields.push(
+            {
+              type: 'signature',
+              required: true,
+              fixed_width: false,
+              x: signCoords[0], // X coordinate for signature
+              y: signCoords[1], // Y coordinate for signature
+              page: i,
+              recipient_id: 1
+            },
+            {
+              type: 'date',
+              required: true,
+              fixed_width: false,
+              lock_sign_date: true, // Locks the date to auto-populate
+              x: dateCoords[0], // X coordinate for date
+              y: dateCoords[1], // Y coordinate for date
+              page: i,
+              recipient_id: 1,
+              date_format: 'MM/DD/YYYY'
+            }
+          );
+    
+          // Check if comments_coordinates exists and add a text field
+          if (commentCoords) {
+            fields.push(
+              {
+                type: 'text',
+                required: false,
+                fixed_width: false,
+                x: commentCoords[0], // X coordinate for comments
+                y: commentCoords[1], // Y coordinate for comments
+                page: i,
+                recipient_id: 1,
+              }
+            );
+          }
+        }else {
+          // For all other coordinates (non-signature, date, or comments), add them as text fields
+          fields.push({
+            type: 'text',
+            required: false,
+            fixed_width: false,
+            x: coord[0], // X coordinate
+            y: coord[1], // Y coordinate
+            page: i,
+            recipient_id: 1
+          });
+        }
+      });
+    }
+    
+
+      // Add additional fields based on specific coordinates for each page
+      // Object.keys(coordinates).forEach((pageKey) => {
+      //   if (pageKey.startsWith('page')) {
+      //     console.log("pagw",pageKey)
+      //     const pageNumber = parseInt(pageKey.split('_')[1]); // Extract page number from key
+      //     console.log("no",pageNumber)
+      //     const pageCoordinates = coordinates[pageKey];
+
+      //     // Loop through each coordinate on the current page to create custom fields
+      //     pageCoordinates.forEach(coord => {
+      //       fields.push({
+      //         type: 'text',
+      //         required: false,
+      //         fixed_width: false,
+      //         x: coord[0], // Multiply X coordinate
+      //         y: coord[1] , // Multiply Y coordinate
+      //         page: pageNumber,
+      //         recipient_id: userDecode.user_id
+      //       });
+      //     });
+      //   }
+      // });
+
+
+      console.log(`The PDF has ${pageCount} pages.`);
+      console.log("Fields for signing", fields);
+
+      signwell.auth('YWNjZXNzOjFhMTFjMzhkY2RkNDZhMWZlNDZkNDIyNGM5ODM1NTBj');
+      const signUrl = await signwell.postApiV1Documents({
+        test_mode: true,
+        draft: false,
+        with_signature_page: false,
+        reminders: true,
+        apply_signing_order: false,
+        embedded_signing: false,
+        embedded_signing_notifications: false,
+        text_tags: false,
+        allow_decline: true,
+        allow_reassign: true,
+        files: [
+          {
+            name: pdfName,
+            file_url: pdfUrl
+          }
+        ],
+        recipients: [
+          {
+            send_email: false,
+            send_email_delay: 0,
+            id: 1,
+            email: "codistan@gmail.com"
+          }
+        ],
+        fields: [fields]
+      });
+
+      return res.status(200).send(`Document processed successfully ${JSON.stringify(signUrl)}`);
+    } catch (err) {
+      if (err === 'Forbidden') {
+        return res.sendStatus(403); // Forbidden status if JWT verification fails
+      }
+      if (err.response) {
+        console.error('Invalid keys:', err);
+        console.error('Error message:', err);
+        return res.status(400).send(err.response.data);
+      } else {
+        console.error('Error:', err);
+        return res.status(500).send("Internal server error", err);
+      }
+    }
+  });
+});
+
+
+
+
